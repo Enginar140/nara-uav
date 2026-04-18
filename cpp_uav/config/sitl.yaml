@@ -1,0 +1,87 @@
+system:
+  thread_pool_size: 4
+  opponent_stale_timeout_s: 10.0
+
+mavlink:
+  pixhawk:
+    connection: "udpin:127.0.0.1:14550"
+    heartbeat_timeout: 5.0
+  gcs:
+    connection: "tcpin:127.0.0.1:14552"
+
+safety:
+  monitoring_rate_hz: 20.0
+  hss_buffer_m: 40.0
+  boundary_buffer_m: 20.0
+  min_altitude_m: 20.0
+  max_altitude_m: 500.0
+  max_velocity_ms: 40.0
+  collision_critical_m: 30.0
+  collision_high_m: 80.0
+  collision_medium_m: 200.0
+  collision_low_m: 500.0
+  ttc_critical_s: 5.0
+  ttc_high_s: 10.0
+  boundary_warn_m: 30.0
+
+nav:
+  planner:
+    hss_buffer_m: 40.0
+    min_turn_radius_m: 50.0
+    polygon_segments: 12
+  waypoint:
+    acceptance_radius_m: 80.0
+  speed:
+    cruise: 20.0
+    max: 35.0
+    min: 12.0
+    patrol: 18.0
+    pursuit: 30.0
+    dive: 25.0
+  command:
+    min_interval_ms: 250
+    min_plan_interval_ms: 2000
+
+flight:
+  cruise_altitude_m: 100.0
+
+mission:
+  follow:
+    pursuit_range_m: 200.0
+    reacquire_timeout_s: 5.0
+    prediction_horizon_s: 3.0
+    target_stale_s: 3.0
+    plan_update_interval_s: 3.0
+  qr_dive:
+    approach_altitude_m: 120.0
+    min_altitude_m: 20.0
+    climb_altitude_m: 100.0
+    entry_corridor_m: 500.0
+    align_heading_tolerance_deg: 15.0
+    align_altitude_tolerance_m: 10.0
+    dive_pitch_deg: -45.0
+    dive_speed_ms: 25.0
+    target_pass_distance_m: 15.0
+    climb_timeout_s: 30.0
+  patrol:
+    boundary_inset_m: 50.0
+    cruise_altitude_m: 100.0
+
+# SITL test boundary (San Francisco - SITL default home bolgesi, v9.1 ile ayni)
+boundary:
+  vertices:
+    - { lat: 37.8488325, lon: -122.3942184 }
+    - { lat: 37.7973058, lon: -122.3808289 }
+    - { lat: 37.8200904, lon: -122.3125076 }
+    - { lat: 37.8626572, lon: -122.3303604 }
+
+# SITL test HSS zones (San Francisco alan icinde)
+hss_zones:
+  - { id: 1, lat: 37.8300, lon: -122.3600, alt: 0, radius: 200.0, active: true }
+  - { id: 2, lat: 37.8150, lon: -122.3400, alt: 0, radius: 150.0, active: true }
+
+logging:
+  level: "debug"
+  dir: "logs"
+  max_size_mb: 50
+  backup_count: 10

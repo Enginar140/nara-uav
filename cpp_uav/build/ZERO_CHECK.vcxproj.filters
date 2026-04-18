@@ -1,0 +1,13 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <CustomBuild Include="C:\Users\Engin\Desktop\Nara\v10\cpp_uav\build\CMakeFiles\4210d0390e04b152f6914991aeaf220d\generate.stamp.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="CMake Rules">
+      <UniqueIdentifier>{1685AEDC-9C90-35C0-AD48-BFF0ECA04DB2}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

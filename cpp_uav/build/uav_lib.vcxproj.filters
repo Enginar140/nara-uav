@@ -1,0 +1,97 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="C:\Users\Engin\Desktop\Nara\v10\cpp_uav\build\CMakeFiles\uav_lib.dir\Unity\unity_1_cxx.cxx">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Engin\Desktop\Nara\v10\cpp_uav\build\CMakeFiles\uav_lib.dir\Unity\unity_0_cxx.cxx">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Engin\Desktop\Nara\v10\cpp_uav\src\core\types.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Engin\Desktop\Nara\v10\cpp_uav\src\core\geo.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Engin\Desktop\Nara\v10\cpp_uav\src\config\config_manager.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Engin\Desktop\Nara\v10\cpp_uav\src\infra\log_manager.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Engin\Desktop\Nara\v10\cpp_uav\src\infra\event_bus.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Engin\Desktop\Nara\v10\cpp_uav\src\infra\thread_pool.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Engin\Desktop\Nara\v10\cpp_uav\src\world_model\world_model.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Engin\Desktop\Nara\v10\cpp_uav\src\safety\zone_checker.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Engin\Desktop\Nara\v10\cpp_uav\src\safety\safety_gate.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Engin\Desktop\Nara\v10\cpp_uav\src\safety\safety_monitor.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Engin\Desktop\Nara\v10\cpp_uav\src\safety\escape_manager.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Engin\Desktop\Nara\v10\cpp_uav\src\nav\path_planner.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Engin\Desktop\Nara\v10\cpp_uav\src\nav\waypoint_chain.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Engin\Desktop\Nara\v10\cpp_uav\src\nav\navigation_engine.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Engin\Desktop\Nara\v10\cpp_uav\src\comm\flight_commander.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Engin\Desktop\Nara\v10\cpp_uav\src\comm\connection_manager.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Engin\Desktop\Nara\v10\cpp_uav\src\comm\statustext_parser.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Engin\Desktop\Nara\v10\cpp_uav\src\comm\param_reader.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Engin\Desktop\Nara\v10\cpp_uav\src\comm\mavlink_bridge.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Engin\Desktop\Nara\v10\cpp_uav\src\mission\patrol_mode.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Engin\Desktop\Nara\v10\cpp_uav\src\mission\follow_mode.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Engin\Desktop\Nara\v10\cpp_uav\src\mission\qr_dive_mode.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Engin\Desktop\Nara\v10\cpp_uav\src\mission\ardupilot_mode.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Engin\Desktop\Nara\v10\cpp_uav\src\mission\mission_director.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Engin\Desktop\Nara\v10\cpp_uav\src\vision\tracking_controller.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Engin\Desktop\Nara\v10\cpp_uav\src\app\application.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="C:\Users\Engin\Desktop\Nara\v10\cpp_uav\CMakeLists.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{0C74ADAB-B185-361F-8984-3D3AB3937368}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>
