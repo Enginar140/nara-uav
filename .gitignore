@@ -1,0 +1,41 @@
+# Build outputs
+cpp_uav/build/
+cpp_uav/logs/
+build/
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CMakeUserPresets.json
+
+# IDE
+.vscode/
+.vs/
+*.user
+
+# Compiled
+*.obj
+*.o
+*.lib
+*.a
+*.exe
+*.dll
+*.pdb
+*.ilk
+*.idb
+*.tlog
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Logs
+*.log
+
+# vcpkg
+vcpkg_installed/
+
+# External clones (kept locally, not pushed)
+cpp_uav_external/ardupilot_repo/
+cpp_uav_external/install_cygwin.ps1

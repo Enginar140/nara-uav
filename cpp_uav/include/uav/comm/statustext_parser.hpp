@@ -4,6 +4,7 @@
 
 #include <chrono>
 #include <map>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -75,7 +76,10 @@ private:
         std::chrono::steady_clock::time_point timestamp;
     };
 
+    // buffer_ is touched from multiple receive threads (pixhawk + gcs).
+    // Guard all access with buffer_mutex_.
     std::map<std::string, BufferEntry> buffer_;
+    mutable std::mutex buffer_mutex_;
 
     void cleanupStaleBuffers();
 

@@ -15,40 +15,47 @@ namespace uav::comm {
 std::optional<ParsedStatusText> StatusTextParser::parse(const std::string& text) {
     if (text.empty()) return std::nullopt;
 
-    cleanupStaleBuffers();
-
     std::string prefix, content;
     int part, total;
     if (isMultiPart(text, prefix, part, total, content)) {
-        std::string key = prefix + "_" + std::to_string(total);
+        std::string combined;
+        bool complete = false;
+        {
+            std::lock_guard lock(buffer_mutex_);
+            cleanupStaleBuffers();
 
-        if (buffer_.find(key) == buffer_.end()) {
-            BufferEntry entry;
-            entry.parts.resize(total);
-            entry.total_parts = total;
-            entry.received_count = 0;
-            entry.timestamp = std::chrono::steady_clock::now();
-            buffer_[key] = entry;
-        }
-
-        auto& entry = buffer_[key];
-        int idx = part - 1;
-        if (idx >= 0 && idx < total) {
-            if (entry.parts[idx].empty()) {
-                entry.parts[idx] = content;
-                entry.received_count++;
+            std::string key = prefix + "_" + std::to_string(total);
+            auto it = buffer_.find(key);
+            if (it == buffer_.end()) {
+                BufferEntry entry;
+                entry.parts.resize(total);
+                entry.total_parts = total;
+                entry.received_count = 0;
+                entry.timestamp = std::chrono::steady_clock::now();
+                it = buffer_.emplace(key, std::move(entry)).first;
             }
-            entry.timestamp = std::chrono::steady_clock::now();
+
+            auto& entry = it->second;
+            int idx = part - 1;
+            if (idx >= 0 && idx < total) {
+                if (entry.parts[idx].empty()) {
+                    entry.parts[idx] = content;
+                    entry.received_count++;
+                }
+                entry.timestamp = std::chrono::steady_clock::now();
+            }
+
+            if (entry.received_count >= entry.total_parts) {
+                for (const auto& p : entry.parts) combined += p;
+                buffer_.erase(it);
+                complete = true;
+            }
         }
 
-        if (entry.received_count >= entry.total_parts) {
-            std::string combined;
-            for (const auto& p : entry.parts) combined += p;
-            buffer_.erase(key);
+        if (complete) {
             LOG_DEBUG("Multi-part complete: {} ({} parts)", prefix, total);
             return parse(combined);
         }
-
         return std::nullopt;
     }
 
@@ -62,7 +69,10 @@ std::optional<ParsedStatusText> StatusTextParser::parse(const std::string& text)
     return std::nullopt;
 }
 
-void StatusTextParser::clearBuffer() { buffer_.clear(); }
+void StatusTextParser::clearBuffer() {
+    std::lock_guard lock(buffer_mutex_);
+    buffer_.clear();
+}
 
 // RIV:ID:LAT:LON:ALT:HDG:SPD:TS
 std::optional<ParsedStatusText> StatusTextParser::parseRIV(const std::string& text) {
@@ -171,9 +181,10 @@ std::optional<ParsedStatusText> StatusTextParser::parseBND(const std::string& te
         result.boundary_vertex_count = count;
 
         core::Boundary boundary;
-        boundary.min_altitude = 50.0;
-        boundary.max_altitude = 500.0;
-
+        // Altitude limits intentionally left at core::Boundary defaults; the
+        // Application/world layer overlays the configured min/max altitudes
+        // (see Application::loadBoundaryFromConfig) so the parser does not
+        // hardcode mission-specific values.
         int idx = 2;
         for (int i = 0; i < count; i++) {
             if (idx + 2 > static_cast<int>(parts.size())) {

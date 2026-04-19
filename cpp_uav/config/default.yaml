@@ -44,28 +44,6 @@ nav:
 
 flight:
   cruise_altitude_m: 100.0
-  # Local Control parametreleri - Standart MAVLink komutları için
-  local_control:
-    # Speed kontrol parametreleri
-    speed:
-      # Min/max speed (m/s) - güvenlik limitleri
-      min_ms: 10.0
-      max_ms: 50.0
-      # Varsayılan hız tipi: true=airspeed, false=groundspeed
-      use_airspeed: true
-    # Heading kontrol parametreleri (ROI ile)
-    heading:
-      # Yaw hızı (deg/s) - CONDITION_YAW için
-      yaw_speed_dps: 30.0
-      # ROI güncelleme hızı (saniye)
-      roi_update_interval_s: 0.5
-    # Altitude kontrol parametreleri
-    altitude:
-      # Min/max irtifa (m) - güvenlik limitleri
-      min_m: 30.0
-      max_m: 400.0
-      # Altitude değişim toleransı (m)
-      tolerance_m: 5.0
 
 mission:
   follow:
@@ -79,6 +57,12 @@ mission:
     pursuit_speed_ms: 30.0
     pn_gain: 3.0
     pn_max_lead_deg: 45.0
+    # Vision-perception fallback when world-model loses the target. When
+    # false (default), FOLLOW behaves as before and goes straight to
+    # REACQUIRE when the world-model target goes stale.
+    vision_fallback: false
+    vision_module: "vision_tracker"
+    vision_lock_age_s: 0.5
   qr_dive:
     approach_altitude_m: 120.0
     min_altitude_m: 20.0
@@ -92,9 +76,86 @@ mission:
     climb_timeout_s: 30.0
     use_position_dive: true
     dive_step_interval_s: 0.5
+    # Terminal-phase guidance: prefer perception lock (frame-aware dispatch)
+    # over the blind position/bearing step. Falls back automatically when
+    # no fresh detection is available.
+    use_perception_terminal: true
+    perception_lock_age_s: 0.5
+    perception_module: "qr_simple"
+    # Behaviour after the dive sequence finishes: rtl | patrol | loiter.
+    # rtl is the safest default - hands control back to ArduPilot RTL.
+    on_complete: "rtl"
   patrol:
     boundary_inset_m: 50.0
     cruise_altitude_m: 100.0
+
+perception:
+  tick_rate_hz: 10.0
+  min_confidence: 0.4
+  lock_timeout_ms: 1000.0
+  publish_misses: true
+  vision:
+    detection_timeout_s: 1.0
+    default_range_m: 100.0
+    min_confidence: 0.5
+    target_id: -1            # -1 = nearest opponent in WorldModel
+    use_world_fallback: true
+  qr:
+    detection_timeout_s: 0.7
+    default_range_m: 60.0
+    min_confidence: 0.6
+    expected_payload: ""     # empty = accept any QR payload
+
+  # Real-camera vision tracker (OpenCV). Default OFF in production config -
+  # turn on when a physical camera is wired and OpenCV is linked into the
+  # build. To activate per-mission set:
+  #     mission.follow.vision_module: "vision_tracker_opencv"
+  #     mission.qr_dive.perception_module: "vision_tracker_opencv"  (rare)
+  opencv_vision:
+    enabled: false
+    id: "vision_tracker_opencv"
+    auto_start: false   # debug only; mission mode tetiklemesini bekler
+    camera:
+      type: "device"
+      device_index: 0
+      url: ""
+      file_path: ""
+      width: 640
+      height: 480
+      fps: 30.0
+      loop_file: true
+    h_fov_deg: 60.0
+    v_fov_deg: 45.0
+    detection_timeout_s: 1.0
+    min_confidence: 0.55
+    worker_sleep_ms: 5
+    detector:
+      dp: 1.2
+      min_dist_factor: 0.25
+      param1: 100.0
+      param2: 30.0
+      min_radius_px: 15
+      max_radius_px: 200
+      gaussian_kernel: 9
+      use_hsv_mask: false
+      hsv_lo_h1: 0
+      hsv_hi_h1: 10
+      hsv_lo_h2: 170
+      hsv_hi_h2: 179
+      hsv_lo_s: 100
+      hsv_hi_s: 255
+      hsv_lo_v: 80
+      hsv_hi_v: 255
+      base_confidence: 0.7
+    range:
+      mode: "fixed"
+      fixed_m: 50.0
+      real_diameter_m: 0.30
+      min_m: 1.0
+      max_m: 1000.0
+    preview:
+      enabled: false
+      title: "uav vision (round)"
 
 # Yarışma alanı sınırları
 # SITL test: v9.1 San Francisco boundary

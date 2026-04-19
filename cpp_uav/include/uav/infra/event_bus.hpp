@@ -42,6 +42,8 @@ enum class EventType {
 
     PARAMS_READY,
 
+    PERCEPTION_UPDATED,
+
     SYSTEM_STARTED,
     SYSTEM_STOPPING
 };
@@ -94,6 +96,7 @@ private:
     std::thread dispatch_thread_;
     std::atomic<bool> running_{false};
     std::atomic<uint64_t> next_id_{1};
+    std::atomic<uint64_t> dropped_count_{0};
     size_t max_queue_;
 
     void dispatchLoop();

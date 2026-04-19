@@ -22,14 +22,8 @@
             g_wsa_initialized = true;
         }
     }
-    static void platformSocketCleanup() {}
     static void platformCloseSocket(socket_t s) { ::closesocket(s); }
     static int platformGetError() { return WSAGetLastError(); }
-
-    static bool platformSetNonBlocking(socket_t s) {
-        u_long mode = 1;
-        return ioctlsocket(s, FIONBIO, &mode) == 0;
-    }
 
     static int platformPoll(socket_t fd, int timeout_ms) {
         fd_set readfds;
@@ -55,15 +49,8 @@
     static constexpr int SOCK_ERR = -1;
 
     static void platformSocketInit() {}
-    static void platformSocketCleanup() {}
     static void platformCloseSocket(socket_t s) { ::close(s); }
     static int platformGetError() { return errno; }
-
-    static bool platformSetNonBlocking(socket_t s) {
-        int flags = fcntl(s, F_GETFL, 0);
-        if (flags < 0) return false;
-        return fcntl(s, F_SETFL, flags | O_NONBLOCK) >= 0;
-    }
 
     static int platformPoll(socket_t fd, int timeout_ms) {
         struct pollfd pfd;
@@ -283,12 +270,14 @@ ConnectionStats ConnectionManager::getStats() const {
 // =============================================================================
 
 bool ConnectionManager::sendUDP(const uint8_t* data, size_t len) {
-    if (!has_remote_addr_) return false;
-
-    std::lock_guard lock(remote_addr_mutex_);
     struct sockaddr_in addr;
-    std::memcpy(&addr, remote_addr_storage_, sizeof(addr));
+    {
+        std::lock_guard lock(remote_addr_mutex_);
+        if (!has_remote_addr_) return false;
+        std::memcpy(&addr, remote_addr_storage_, sizeof(addr));
+    }
 
+    std::lock_guard send_lock(send_mutex_);
     auto sent = ::sendto(static_cast<socket_t>(socket_fd_),
                          reinterpret_cast<const char*>(data),
                          static_cast<int>(len), 0,
@@ -301,6 +290,8 @@ bool ConnectionManager::sendTCP(const uint8_t* data, size_t len) {
     auto fd = (client_socket_ != 0) ? client_socket_ : socket_fd_;
     if (fd == 0) return false;
 
+    // Serialize concurrent senders so MAVLink frames are not interleaved.
+    std::lock_guard lock(send_mutex_);
     auto sent = ::send(static_cast<socket_t>(fd),
                        reinterpret_cast<const char*>(data),
                        static_cast<int>(len), 0);
@@ -388,6 +379,12 @@ void ConnectionManager::receiveLoop() {
             last_data_time_ = std::chrono::steady_clock::now();
         }
 
+        // Account bytes once per receive call; messages_received is per parsed frame.
+        {
+            std::lock_guard lock(stats_mutex_);
+            stats_.bytes_received += static_cast<uint64_t>(n);
+        }
+
         for (int i = 0; i < n; ++i) {
             if (mavlink_parse_char(MAVLINK_COMM_0, buffer[i], &msg, &status)) {
                 MAVLinkMessage wrapped;
@@ -397,7 +394,6 @@ void ConnectionManager::receiveLoop() {
                 {
                     std::lock_guard lock(stats_mutex_);
                     stats_.messages_received++;
-                    stats_.bytes_received += static_cast<uint64_t>(n);
                 }
 
                 if (message_callback_) {

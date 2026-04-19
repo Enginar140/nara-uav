@@ -3,11 +3,16 @@
 #include "uav/mission/mission_mode.hpp"
 #include "uav/nav/navigation_engine.hpp"
 #include "uav/comm/flight_commander.hpp"
+#include "uav/perception/perception_engine.hpp"
+#include "uav/perception/perception_types.hpp"
 #include "uav/world_model/world_model.hpp"
+#include "uav/infra/event_bus.hpp"
 
+#include <atomic>
 #include <chrono>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 
@@ -40,12 +45,22 @@ public:
         double climb_timeout_s = 30.0;
         bool use_position_dive = true;
         double dive_step_interval_s = 0.5;
+        // Use shared PerceptionEngine for terminal guidance during DIVE.
+        // When true, dispatchPerceptionTarget is preferred over the blind
+        // bearing/position step; if no fresh lock is available the blind
+        // fallback resumes automatically.
+        bool use_perception_terminal = true;
+        double perception_lock_age_s = 0.5;
+        std::string perception_module_id = "qr_simple";
     };
 
     QRDiveMode(std::shared_ptr<nav::NavigationEngine> nav,
                std::shared_ptr<world_model::WorldModel> world_model,
                std::shared_ptr<comm::FlightCommander> commander,
                Config config = {});
+
+    void setPerceptionEngine(std::shared_ptr<perception::PerceptionEngine> engine,
+                             std::shared_ptr<infra::EventBus> bus);
 
     void setDiveTarget(const core::Position& target);
     void setQRCallback(QRCallback cb) { qr_callback_ = std::move(cb); }
@@ -65,6 +80,10 @@ private:
     std::shared_ptr<nav::NavigationEngine> nav_;
     std::shared_ptr<world_model::WorldModel> world_model_;
     std::shared_ptr<comm::FlightCommander> commander_;
+    std::shared_ptr<perception::PerceptionEngine> perception_;
+    std::shared_ptr<infra::EventBus> event_bus_;
+    uint64_t perception_sub_id_ = 0;
+
     Config config_;
     QRCallback qr_callback_;
     std::function<void()> completion_cb_;
@@ -75,6 +94,15 @@ private:
     DivePhase phase_ = DivePhase::APPROACH;
     std::chrono::steady_clock::time_point phase_start_;
     QRDetectionResult last_qr_;
+
+    mutable std::mutex perception_mutex_;
+    std::optional<perception::PerceptionTarget> last_perception_;
+    std::chrono::steady_clock::time_point last_perception_time_;
+    std::atomic<bool> perception_active_{false};
+
+    void enablePerception();
+    void disablePerception();
+    bool tryPerceptionDispatch();
 
     void calculateEntryPoint();
     void tickApproach(const core::UAVState& own);

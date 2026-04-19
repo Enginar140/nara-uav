@@ -1,6 +1,7 @@
 #include "uav/nav/path_planner.hpp"
 #include "uav/core/geo.hpp"
 #include "uav/core/time_utils.hpp"
+#include "uav/infra/log_manager.hpp"
 
 #include <algorithm>
 #include <cmath>

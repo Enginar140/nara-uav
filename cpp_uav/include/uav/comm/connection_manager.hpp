@@ -75,6 +75,9 @@ private:
     std::atomic<bool> has_remote_addr_{false};
     std::recursive_mutex remote_addr_mutex_;
 
+    // Serializes raw socket sends so concurrent callers don't interleave frames.
+    std::mutex send_mutex_;
+
     std::chrono::steady_clock::time_point last_data_time_;
     mutable std::mutex health_mutex_;
 

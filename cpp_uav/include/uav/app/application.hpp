@@ -13,6 +13,12 @@
 #include "uav/nav/path_planner.hpp"
 #include "uav/nav/speed_manager.hpp"
 #include "uav/nav/navigation_engine.hpp"
+#include "uav/perception/perception_engine.hpp"
+#include "uav/perception/simple_qr_detector.hpp"
+#include "uav/perception/simple_vision_tracker.hpp"
+#ifdef UAV_HAS_OPENCV
+#include "uav/perception/opencv_vision_tracker.hpp"
+#endif
 #include "uav/mission/mission_director.hpp"
 
 #include <atomic>
@@ -59,12 +65,20 @@ private:
     std::shared_ptr<nav::SpeedManager> speed_manager_;
     std::shared_ptr<nav::NavigationEngine> nav_engine_;
 
+    std::shared_ptr<perception::PerceptionEngine> perception_;
+    std::shared_ptr<perception::SimpleVisionTracker> vision_tracker_;
+    std::shared_ptr<perception::SimpleQRDetector> qr_detector_;
+#ifdef UAV_HAS_OPENCV
+    std::shared_ptr<perception::OpenCvVisionTracker> opencv_vision_tracker_;
+#endif
+
     std::shared_ptr<mission::MissionDirector> mission_;
 
     bool initCore();
     bool initComm();
     bool initSafety();
     bool initNav();
+    bool initPerception();
     bool initMission();
     void subscribeEvents();
     void loadBoundaryFromConfig();

@@ -1,5 +1,0 @@
-C:/Users/Engin/Desktop/Nara/v10/cpp_uav/build/CMakeFiles/yaml_cpp_static.dir
-C:/Users/Engin/Desktop/Nara/v10/cpp_uav/build/CMakeFiles/uav_lib.dir
-C:/Users/Engin/Desktop/Nara/v10/cpp_uav/build/CMakeFiles/uav_system.dir
-C:/Users/Engin/Desktop/Nara/v10/cpp_uav/build/CMakeFiles/ALL_BUILD.dir
-C:/Users/Engin/Desktop/Nara/v10/cpp_uav/build/CMakeFiles/ZERO_CHECK.dir

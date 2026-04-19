@@ -1,18 +1,44 @@
 #include "uav/mission/mission_director.hpp"
 #include "uav/infra/log_manager.hpp"
 
+#include <algorithm>
+#include <cctype>
+#include <chrono>
+#include <thread>
+
 namespace uav::mission {
+
+const char* toString(PostDiveAction action) {
+    switch (action) {
+        case PostDiveAction::RTL:    return "RTL";
+        case PostDiveAction::PATROL: return "PATROL";
+        case PostDiveAction::LOITER: return "LOITER";
+    }
+    return "UNKNOWN";
+}
+
+PostDiveAction parsePostDiveAction(const std::string& s, PostDiveAction fallback) {
+    std::string lower;
+    lower.reserve(s.size());
+    for (char c : s) lower.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+    if (lower == "rtl")    return PostDiveAction::RTL;
+    if (lower == "patrol") return PostDiveAction::PATROL;
+    if (lower == "loiter") return PostDiveAction::LOITER;
+    return fallback;
+}
 
 MissionDirector::MissionDirector(
     std::shared_ptr<nav::NavigationEngine> nav,
     std::shared_ptr<comm::FlightCommander> commander,
     std::shared_ptr<world_model::WorldModel> world_model,
     std::shared_ptr<infra::EventBus> event_bus,
+    std::shared_ptr<perception::PerceptionEngine> perception,
     Config config)
     : nav_(std::move(nav)),
       commander_(std::move(commander)),
       world_model_(std::move(world_model)),
       event_bus_(std::move(event_bus)),
+      perception_(std::move(perception)),
       config_(config) {}
 
 void MissionDirector::initialize() {
@@ -21,9 +47,13 @@ void MissionDirector::initialize() {
     follow_    = std::make_unique<FollowMode>(nav_, world_model_, config_.follow);
     qr_dive_   = std::make_unique<QRDiveMode>(nav_, world_model_, commander_, config_.qr_dive);
 
+    if (perception_) {
+        follow_->setPerceptionEngine(perception_, event_bus_);
+        qr_dive_->setPerceptionEngine(perception_, event_bus_);
+    }
+
     qr_dive_->setCompletionCallback([this] {
-        LOG_INFO("MissionDirector: QR_DIVE completed, switching to PATROL");
-        requestMode(core::MissionMode::PATROL);
+        onQRDiveComplete();
     });
 
     follow_->setTargetLostCallback([this] {
@@ -34,27 +64,56 @@ void MissionDirector::initialize() {
     ardupilot_->onEnter();
 }
 
-bool MissionDirector::requestMode(core::MissionMode mode) {
-    std::lock_guard lock(mode_mutex_);
+void MissionDirector::onQRDiveComplete() {
+    LOG_INFO("MissionDirector: QR_DIVE completed, on_complete={}",
+             toString(config_.qr_dive_on_complete));
 
-    if (mode == current_mode_) return true;
+    // Always release stale GUIDED state before next mode takes over.
+    if (nav_) (void)nav_->releaseGuidedHold();
 
-    if (!validateTransition(current_mode_, mode)) {
-        LOG_WARN("MissionDirector: invalid transition {} -> {}",
-                 core::toString(current_mode_), core::toString(mode));
-        return false;
+    switch (config_.qr_dive_on_complete) {
+        case PostDiveAction::PATROL:
+            requestMode(core::MissionMode::PATROL);
+            return;
+        case PostDiveAction::LOITER: {
+            // Demote to passthrough and command ArduPilot LOITER directly.
+            forceMode(core::MissionMode::ARDUPILOT);
+            (void)commander_->setMode(comm::ArduPilotMode::LOITER);
+            return;
+        }
+        case PostDiveAction::RTL:
+        default:
+            triggerRTL("qr_dive_complete");
+            return;
     }
+}
 
-    executeTransition(current_mode_, mode);
+bool MissionDirector::requestMode(core::MissionMode mode) {
+    core::MissionMode from;
+    {
+        std::lock_guard lock(mode_mutex_);
+        if (mode == current_mode_) return true;
+        if (!validateTransition(current_mode_, mode)) {
+            LOG_WARN("MissionDirector: invalid transition {} -> {}",
+                     core::toString(current_mode_), core::toString(mode));
+            return false;
+        }
+        from = current_mode_;
+    }
+    executeTransition(from, mode);
     return true;
 }
 
 void MissionDirector::forceMode(core::MissionMode mode) {
-    std::lock_guard lock(mode_mutex_);
-    if (mode == current_mode_) return;
+    core::MissionMode from;
+    {
+        std::lock_guard lock(mode_mutex_);
+        if (mode == current_mode_) return;
+        from = current_mode_;
+    }
     LOG_INFO("MissionDirector: operator force {} -> {}",
-             core::toString(current_mode_), core::toString(mode));
-    executeTransition(current_mode_, mode);
+             core::toString(from), core::toString(mode));
+    executeTransition(from, mode);
 }
 
 core::MissionMode MissionDirector::getCurrentMode() const {
@@ -71,26 +130,34 @@ void MissionDirector::setDiveTarget(const core::Position& target) {
 }
 
 void MissionDirector::tick() {
-    std::lock_guard lock(mode_mutex_);
     auto own = world_model_->getOwnState();
     if (!own.isValid()) return;
 
-    if (current_mode_ != core::MissionMode::ARDUPILOT && !commander_->isInGuidedMode()) {
-        static auto last_retry = std::chrono::steady_clock::time_point{};
-        auto now = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration<double>(now - last_retry).count();
-        if (elapsed > 2.0) {
-            LOG_WARN("MissionDirector: AP not in GUIDED (current={}), retrying setMode",
-                     comm::toString(commander_->getCurrentMode()));
-            (void)commander_->setMode(comm::ArduPilotMode::GUIDED);
-            last_retry = now;
+    core::MissionMode mode_snapshot;
+    IMissionMode* handler = nullptr;
+    bool needs_operator_override = false;
+    {
+        std::lock_guard lock(mode_mutex_);
+        mode_snapshot = current_mode_;
+        // If the operator pulled us out of GUIDED while we were running an
+        // autonomous mode, treat that as an explicit handover and demote to
+        // ARDUPILOT instead of fighting the operator with repeated setMode.
+        if (mode_snapshot != core::MissionMode::ARDUPILOT &&
+            !commander_->isInGuidedMode()) {
+            needs_operator_override = true;
+        } else {
+            handler = activeHandler();
         }
     }
 
-    auto* handler = activeHandler();
-    if (handler) {
-        handler->tick(own);
+    if (needs_operator_override) {
+        LOG_WARN("MissionDirector: AP left GUIDED (mode={}); handing control back to operator (ARDUPILOT)",
+                 comm::toString(commander_->getCurrentMode()));
+        forceMode(core::MissionMode::ARDUPILOT);
+        return;
     }
+
+    if (handler) handler->tick(own);
 }
 
 void MissionDirector::handleModeCommand(const comm::ParsedModeCommand& cmd) {
@@ -137,7 +204,11 @@ MissionDirector::Stats MissionDirector::getStats() const {
 }
 
 IMissionMode* MissionDirector::activeHandler() {
-    switch (current_mode_) {
+    return handlerForMode(current_mode_);
+}
+
+IMissionMode* MissionDirector::handlerForMode(core::MissionMode mode) {
+    switch (mode) {
         case core::MissionMode::ARDUPILOT: return ardupilot_.get();
         case core::MissionMode::PATROL:    return patrol_.get();
         case core::MissionMode::FOLLOW:    return follow_.get();
@@ -154,7 +225,9 @@ bool MissionDirector::validateTransition(core::MissionMode from,
     // anything → ARDUPILOT: always allowed (safety fallback)
     if (to == core::MissionMode::ARDUPILOT) return true;
 
-    // QR_DIVE → only ARDUPILOT or PATROL (must complete or abort)
+    // QR_DIVE: only PATROL allowed as a clean exit (ARDUPILOT was handled above
+    // as the universal safety fallback). Direct QR_DIVE -> FOLLOW is rejected
+    // so the dive sequence can either complete or be cleanly aborted.
     if (from == core::MissionMode::QR_DIVE) {
         return to == core::MissionMode::PATROL;
     }
@@ -174,21 +247,39 @@ void MissionDirector::executeTransition(core::MissionMode from,
                                         core::MissionMode to) {
     LOG_INFO("MissionDirector: {} -> {}", core::toString(from), core::toString(to));
 
-    auto* old_handler = activeHandler();
-    if (old_handler) old_handler->onExit();
-
-    // GUIDED mode MUST be set BEFORE onEnter, because onEnter sends flight commands
-    if (to != core::MissionMode::ARDUPILOT) {
-        if (!commander_->isInGuidedMode()) {
-            (void)commander_->setMode(comm::ArduPilotMode::GUIDED);
-            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    // Run onExit on the *previous* handler without holding mode_mutex_.
+    {
+        IMissionMode* old_handler = nullptr;
+        {
+            std::lock_guard lock(mode_mutex_);
+            old_handler = handlerForMode(current_mode_);
         }
+        if (old_handler) old_handler->onExit();
     }
 
-    current_mode_ = to;
-    transition_count_++;
+    // GUIDED MUST be active before onEnter (onEnter may send flight commands).
+    // The setMode + brief settle wait happens outside any mutex so that
+    // operator/tick paths are not blocked.
+    if (to != core::MissionMode::ARDUPILOT && !commander_->isInGuidedMode()) {
+        (void)commander_->setMode(comm::ArduPilotMode::GUIDED);
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    }
 
-    auto* new_handler = activeHandler();
+    // Clear sticky guided_state (yaw target, last waypoint) on every transition
+    // between autonomous handlers so the new handler's first command is not
+    // overridden by leftovers from the previous one.
+    if (from != to && nav_ && to != core::MissionMode::ARDUPILOT) {
+        (void)nav_->releaseGuidedHold();
+    }
+
+    IMissionMode* new_handler = nullptr;
+    {
+        std::lock_guard lock(mode_mutex_);
+        current_mode_ = to;
+        transition_count_++;
+        new_handler = handlerForMode(to);
+    }
+
     if (new_handler) new_handler->onEnter();
 
     event_bus_->publish(infra::EventType::MODE_CHANGED,

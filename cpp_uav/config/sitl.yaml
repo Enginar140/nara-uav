@@ -13,8 +13,9 @@ safety:
   monitoring_rate_hz: 20.0
   hss_buffer_m: 40.0
   boundary_buffer_m: 20.0
-  min_altitude_m: 20.0
-  max_altitude_m: 500.0
+  # SITL: keep the same envelope as default.yaml so behaviour is comparable.
+  min_altitude_m: 30.0
+  max_altitude_m: 400.0
   max_velocity_ms: 40.0
   collision_critical_m: 30.0
   collision_high_m: 80.0
@@ -52,6 +53,12 @@ mission:
     prediction_horizon_s: 3.0
     target_stale_s: 3.0
     plan_update_interval_s: 3.0
+    # SITL: vision fallback ON so kamera-tabanli senaryolar test edilebilir.
+    # vision_module = "vision_tracker_opencv" -> gercek webcam (HoughCircles).
+    # vision_module = "vision_tracker"        -> sentetik / world-model fallback.
+    vision_fallback: true
+    vision_module: "vision_tracker_opencv"
+    vision_lock_age_s: 0.5
   qr_dive:
     approach_altitude_m: 120.0
     min_altitude_m: 20.0
@@ -63,9 +70,87 @@ mission:
     dive_speed_ms: 25.0
     target_pass_distance_m: 15.0
     climb_timeout_s: 30.0
+    use_perception_terminal: true
+    perception_lock_age_s: 0.5
+    perception_module: "qr_simple"
+    on_complete: "rtl"
   patrol:
     boundary_inset_m: 50.0
     cruise_altitude_m: 100.0
+
+perception:
+  tick_rate_hz: 10.0
+  min_confidence: 0.4
+  lock_timeout_ms: 1000.0
+  publish_misses: true
+  vision:
+    detection_timeout_s: 1.0
+    default_range_m: 100.0
+    min_confidence: 0.5
+    target_id: -1
+    use_world_fallback: true
+  qr:
+    detection_timeout_s: 0.7
+    default_range_m: 60.0
+    min_confidence: 0.6
+    expected_payload: ""
+
+  # Real-camera vision tracker (OpenCV). When enabled and OpenCV is linked,
+  # registers a module with id=opencv_vision.id (default vision_tracker_opencv).
+  # Switch a mission to use it via mission.follow.vision_module:
+  #     mission.follow.vision_module: "vision_tracker_opencv"
+  opencv_vision:
+    enabled: true
+    id: "vision_tracker_opencv"
+    # DEBUG: kamerayi mission moduna gecmeden hemen ac (kamera + preview saniyede acilir).
+    # Calistigini gordukten sonra false yapip mission tarafindan tetiklenmesini izle.
+    auto_start: true
+
+    camera:
+      type: "device"          # device | rtsp | http | file | auto
+      device_index: 1          # built-in laptop webcam = 0
+      url: ""                  # rtsp://user:pass@ip:554/stream  or  http://ip:port/video
+      file_path: ""            # ./samples/clip.mp4 vb.
+      width: 640
+      height: 480
+      fps: 30.0
+      loop_file: true
+
+    h_fov_deg: 60.0           # laptop webcam ortalama; gercek lensine gore ayarla
+    v_fov_deg: 45.0
+    detection_timeout_s: 1.0
+    min_confidence: 0.55
+    worker_sleep_ms: 5
+
+    detector:
+      dp: 1.2
+      min_dist_factor: 0.25
+      param1: 100.0
+      param2: 30.0
+      min_radius_px: 15
+      max_radius_px: 200
+      gaussian_kernel: 9
+      use_hsv_mask: false      # true yaparsan asagidaki HSV bandina gore filtreler (renkli top icin)
+      hsv_lo_h1: 0
+      hsv_hi_h1: 10
+      hsv_lo_h2: 170
+      hsv_hi_h2: 179
+      hsv_lo_s: 100
+      hsv_hi_s: 255
+      hsv_lo_v: 80
+      hsv_hi_v: 255
+      base_confidence: 0.7
+
+    range:
+      mode: "fixed"           # fixed | size | altitude
+      fixed_m: 50.0
+      real_diameter_m: 0.30   # SIZE icin: hedefin gercek capi (m)
+      min_m: 1.0
+      max_m: 1000.0
+
+    preview:
+      enabled: true            # cv::imshow ile canli onizleme + tespit halkasi
+      title: "uav vision (round) - SITL"
 
 # SITL test boundary (San Francisco - SITL default home bolgesi, v9.1 ile ayni)
 boundary:

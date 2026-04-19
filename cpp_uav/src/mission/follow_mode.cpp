@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 namespace uav::mission {
 
@@ -22,17 +23,95 @@ FollowMode::FollowMode(std::shared_ptr<nav::NavigationEngine> nav,
                        Config config)
     : nav_(std::move(nav)), world_model_(std::move(world_model)), config_(config) {}
 
+void FollowMode::setPerceptionEngine(std::shared_ptr<perception::PerceptionEngine> engine,
+                                     std::shared_ptr<infra::EventBus> bus) {
+    perception_ = std::move(engine);
+    event_bus_ = std::move(bus);
+}
+
 void FollowMode::setTargetId(int id) { target_id_ = id; }
+
+void FollowMode::enablePerception() {
+    if (!config_.vision_fallback || !perception_ || !event_bus_) return;
+    if (perception_active_) return;
+
+    perception_sub_id_ = event_bus_->subscribe(
+        infra::EventType::PERCEPTION_UPDATED,
+        [this](const infra::Event& ev) {
+            if (!ev.hasPayload<perception::PerceptionEvent>()) return;
+            auto pe = ev.getPayload<perception::PerceptionEvent>();
+            std::lock_guard lock(perception_mutex_);
+            if (pe.has_lock) {
+                last_perception_ = pe.target;
+                last_perception_time_ = time::nowSteady();
+            } else {
+                last_perception_.reset();
+            }
+        });
+
+    // Only steal the active module slot when world-model has nothing; we set
+    // it lazily inside tickVisionFallback() so QRDiveMode is not interrupted.
+    perception_active_ = true;
+    LOG_INFO("FollowMode: vision fallback armed (module='{}')", config_.vision_module_id);
+}
+
+void FollowMode::disablePerception() {
+    if (!perception_active_) return;
+    if (event_bus_ && perception_sub_id_ != 0) {
+        event_bus_->unsubscribe(perception_sub_id_);
+        perception_sub_id_ = 0;
+    }
+    if (perception_ && perception_->activeId() == config_.vision_module_id) {
+        (void)perception_->setActive("");
+    }
+    {
+        std::lock_guard lock(perception_mutex_);
+        last_perception_.reset();
+    }
+    perception_active_ = false;
+    using_vision_fallback_ = false;
+    LOG_INFO("FollowMode: vision fallback disarmed");
+}
+
+bool FollowMode::tickVisionFallback() {
+    if (!perception_active_ || !nav_) return false;
+
+    // Promote the module to active if not already (lazy activation).
+    if (perception_ && perception_->activeId() != config_.vision_module_id) {
+        (void)perception_->setActive(config_.vision_module_id);
+    }
+
+    perception::PerceptionTarget target;
+    {
+        std::lock_guard lock(perception_mutex_);
+        if (!last_perception_.has_value()) return false;
+        if (time::durationS(last_perception_time_, time::nowSteady()) >
+            config_.vision_lock_age_s) {
+            return false;
+        }
+        target = *last_perception_;
+    }
+    if (!nav_->dispatchPerceptionTarget(target)) return false;
+    if (!using_vision_fallback_) {
+        LOG_INFO("FollowMode: switched to vision fallback ({} frame, conf={:.2f})",
+                 perception::toString(target.frame), target.confidence);
+        using_vision_fallback_ = true;
+    }
+    return true;
+}
 
 void FollowMode::onEnter() {
     LOG_INFO("FollowMode: entering, target_id={}", target_id_);
     phase_ = FollowPhase::APPROACH;
     target_permanently_lost_ = false;
     los_initialized_ = false;
+    using_vision_fallback_ = false;
+    enablePerception();
 }
 
 void FollowMode::onExit() {
     LOG_INFO("FollowMode: exiting");
+    disablePerception();
     nav_->clearRoute();
 }
 
@@ -40,13 +119,28 @@ void FollowMode::tick(const core::UAVState& own_state) {
     if (target_id_ < 0) return;
 
     auto target_opt = world_model_->getOpponent(target_id_);
+    bool world_target_fresh = target_opt.has_value() &&
+                              target_opt->ageSeconds() <= config_.target_stale_s;
 
-    if (!target_opt.has_value() || target_opt->ageSeconds() > config_.target_stale_s) {
+    if (!world_target_fresh) {
+        // Before giving up, attempt vision fallback if armed. This keeps the
+        // plane pointed at whatever the camera/perception module sees while
+        // the operator/world-model recovers a fresh track.
+        if (config_.vision_fallback && tickVisionFallback()) return;
+
         if (phase_ != FollowPhase::REACQUIRE) {
             transitionTo(FollowPhase::REACQUIRE);
         }
         tickReacquire(own_state);
         return;
+    }
+
+    // World-model recovered: drop vision fallback and reset companion-side
+    // GUIDED state so the new pursuit command is not fighting a stale yaw.
+    if (using_vision_fallback_) {
+        LOG_INFO("FollowMode: world-model target recovered, releasing vision fallback");
+        using_vision_fallback_ = false;
+        if (nav_) (void)nav_->releaseGuidedHold();
     }
 
     auto& target = *target_opt;

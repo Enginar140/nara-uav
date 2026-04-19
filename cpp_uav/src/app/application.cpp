@@ -1,11 +1,19 @@
 #include "uav/app/application.hpp"
 #include "uav/infra/log_manager.hpp"
 #include "uav/core/time_utils.hpp"
+#ifdef UAV_HAS_OPENCV
+#include "uav/perception/camera/opencv_camera.hpp"
+#include "uav/perception/detector/round_detector.hpp"
+#endif
 
 #include <algorithm>
+#include <cmath>
 #include <csignal>
 #include <iomanip>
 #include <iostream>
+#include <limits>
+#include <map>
+#include <mutex>
 #include <sstream>
 
 namespace uav::app {
@@ -23,11 +31,12 @@ Application::~Application() {
 }
 
 bool Application::initialize() {
-    if (!initCore())    return false;
-    if (!initComm())    return false;
-    if (!initSafety())  return false;
-    if (!initNav())     return false;
-    if (!initMission()) return false;
+    if (!initCore())       return false;
+    if (!initComm())       return false;
+    if (!initSafety())     return false;
+    if (!initNav())        return false;
+    if (!initPerception()) return false;
+    if (!initMission())    return false;
     subscribeEvents();
     loadBoundaryFromConfig();
     loadHSSFromConfig();
@@ -48,6 +57,7 @@ bool Application::start() {
     }
 
     event_bus_->start();
+    if (perception_) perception_->start();
     running_ = true;
     event_bus_->publish(infra::EventType::SYSTEM_STARTED);
 
@@ -68,6 +78,7 @@ void Application::stop() {
     running_ = false;
     event_bus_->publish(infra::EventType::SYSTEM_STOPPING);
 
+    if (perception_) perception_->stop();
     safety_monitor_->stop();
     mavlink_->stop();
     event_bus_->stop();
@@ -183,6 +194,122 @@ bool Application::initNav() {
     return true;
 }
 
+bool Application::initPerception() {
+    perception::PerceptionEngine::Config pcfg;
+    pcfg.tick_rate_hz = config_->getDouble("perception.tick_rate_hz", 10.0);
+    pcfg.min_confidence = static_cast<float>(config_->getDouble("perception.min_confidence", 0.4));
+    pcfg.lock_timeout_ms = config_->getDouble("perception.lock_timeout_ms", 1000.0);
+    pcfg.publish_misses = config_->getBool("perception.publish_misses", true);
+
+    perception_ = std::make_shared<perception::PerceptionEngine>(
+        event_bus_, world_model_, pcfg);
+
+    perception::SimpleVisionTracker::Config vt_cfg;
+    vt_cfg.detection_timeout_s = config_->getDouble("perception.vision.detection_timeout_s", 1.0);
+    vt_cfg.default_range_m = static_cast<float>(config_->getDouble("perception.vision.default_range_m", 100.0));
+    vt_cfg.min_confidence = static_cast<float>(config_->getDouble("perception.vision.min_confidence", 0.5));
+    vt_cfg.target_id = config_->getInt("perception.vision.target_id", -1);
+    vt_cfg.use_world_fallback = config_->getBool("perception.vision.use_world_fallback", true);
+    vision_tracker_ = std::make_shared<perception::SimpleVisionTracker>(world_model_, vt_cfg);
+
+    perception::SimpleQRDetector::Config qr_cfg;
+    qr_cfg.detection_timeout_s = config_->getDouble("perception.qr.detection_timeout_s", 0.7);
+    qr_cfg.default_range_m = static_cast<float>(config_->getDouble("perception.qr.default_range_m", 60.0));
+    qr_cfg.min_confidence = static_cast<float>(config_->getDouble("perception.qr.min_confidence", 0.6));
+    qr_cfg.expected_payload = config_->getString("perception.qr.expected_payload", "");
+    qr_detector_ = std::make_shared<perception::SimpleQRDetector>(qr_cfg);
+
+    perception_->registerModule(vision_tracker_);
+    perception_->registerModule(qr_detector_);
+
+#ifdef UAV_HAS_OPENCV
+    if (config_->getBool("perception.opencv_vision.enabled", false)) {
+        perception::OpenCvCamera::Config cam_cfg;
+        cam_cfg.type           = config_->getString("perception.opencv_vision.camera.type",         "device");
+        cam_cfg.device_index   = config_->getInt   ("perception.opencv_vision.camera.device_index", 0);
+        cam_cfg.url            = config_->getString("perception.opencv_vision.camera.url",          "");
+        cam_cfg.file_path      = config_->getString("perception.opencv_vision.camera.file_path",    "");
+        cam_cfg.width          = config_->getInt   ("perception.opencv_vision.camera.width",        640);
+        cam_cfg.height         = config_->getInt   ("perception.opencv_vision.camera.height",       480);
+        cam_cfg.fps            = config_->getDouble("perception.opencv_vision.camera.fps",          30.0);
+        cam_cfg.loop_file      = config_->getBool  ("perception.opencv_vision.camera.loop_file",    true);
+        auto camera = std::make_shared<perception::OpenCvCamera>(cam_cfg);
+
+        perception::RoundDetector::Config det_cfg;
+        det_cfg.dp                = config_->getDouble("perception.opencv_vision.detector.dp",                1.2);
+        det_cfg.min_dist_factor   = config_->getDouble("perception.opencv_vision.detector.min_dist_factor",   0.25);
+        det_cfg.param1            = config_->getDouble("perception.opencv_vision.detector.param1",            100.0);
+        det_cfg.param2            = config_->getDouble("perception.opencv_vision.detector.param2",            30.0);
+        det_cfg.min_radius_px     = config_->getInt   ("perception.opencv_vision.detector.min_radius_px",     15);
+        det_cfg.max_radius_px     = config_->getInt   ("perception.opencv_vision.detector.max_radius_px",     200);
+        det_cfg.gaussian_kernel   = config_->getInt   ("perception.opencv_vision.detector.gaussian_kernel",   9);
+        det_cfg.use_hsv_mask      = config_->getBool  ("perception.opencv_vision.detector.use_hsv_mask",      false);
+        det_cfg.hsv_lo_h1         = config_->getInt   ("perception.opencv_vision.detector.hsv_lo_h1",         0);
+        det_cfg.hsv_hi_h1         = config_->getInt   ("perception.opencv_vision.detector.hsv_hi_h1",         10);
+        det_cfg.hsv_lo_h2         = config_->getInt   ("perception.opencv_vision.detector.hsv_lo_h2",         170);
+        det_cfg.hsv_hi_h2         = config_->getInt   ("perception.opencv_vision.detector.hsv_hi_h2",         179);
+        det_cfg.hsv_lo_s          = config_->getInt   ("perception.opencv_vision.detector.hsv_lo_s",          100);
+        det_cfg.hsv_hi_s          = config_->getInt   ("perception.opencv_vision.detector.hsv_hi_s",          255);
+        det_cfg.hsv_lo_v          = config_->getInt   ("perception.opencv_vision.detector.hsv_lo_v",          80);
+        det_cfg.hsv_hi_v          = config_->getInt   ("perception.opencv_vision.detector.hsv_hi_v",          255);
+        det_cfg.base_confidence   = static_cast<float>(
+                                      config_->getDouble("perception.opencv_vision.detector.base_confidence", 0.7));
+        det_cfg.draw_overlay      = false; // tracker handles preview overlay
+        auto detector = std::make_shared<perception::RoundDetector>(det_cfg);
+
+        perception::OpenCvVisionTracker::Config tk_cfg;
+        tk_cfg.id_tag             = config_->getString("perception.opencv_vision.id",                  "vision_tracker_opencv");
+        tk_cfg.h_fov_deg          = config_->getDouble("perception.opencv_vision.h_fov_deg",           60.0);
+        tk_cfg.v_fov_deg          = config_->getDouble("perception.opencv_vision.v_fov_deg",           45.0);
+        tk_cfg.detection_timeout_s= config_->getDouble("perception.opencv_vision.detection_timeout_s", 1.0);
+        tk_cfg.min_confidence     = static_cast<float>(
+                                      config_->getDouble("perception.opencv_vision.min_confidence",    0.5));
+        tk_cfg.fixed_range_m      = static_cast<float>(
+                                      config_->getDouble("perception.opencv_vision.range.fixed_m",     50.0));
+        tk_cfg.real_diameter_m    = static_cast<float>(
+                                      config_->getDouble("perception.opencv_vision.range.real_diameter_m", 0.30));
+        tk_cfg.min_range_m        = static_cast<float>(
+                                      config_->getDouble("perception.opencv_vision.range.min_m",       1.0));
+        tk_cfg.max_range_m        = static_cast<float>(
+                                      config_->getDouble("perception.opencv_vision.range.max_m",       1000.0));
+        const std::string range_mode = config_->getString("perception.opencv_vision.range.mode", "fixed");
+        if      (range_mode == "size")     tk_cfg.range_mode = perception::OpenCvVisionTracker::RangeMode::SIZE;
+        else if (range_mode == "altitude") tk_cfg.range_mode = perception::OpenCvVisionTracker::RangeMode::ALTITUDE;
+        else                                tk_cfg.range_mode = perception::OpenCvVisionTracker::RangeMode::FIXED;
+        tk_cfg.preview_enabled    = config_->getBool  ("perception.opencv_vision.preview.enabled",     false);
+        tk_cfg.preview_title      = config_->getString("perception.opencv_vision.preview.title",       "uav vision (round)");
+        tk_cfg.worker_sleep_ms    = config_->getInt   ("perception.opencv_vision.worker_sleep_ms",     5);
+
+        opencv_vision_tracker_ = std::make_shared<perception::OpenCvVisionTracker>(
+            camera, detector, tk_cfg);
+        perception_->registerModule(opencv_vision_tracker_);
+        LOG_INFO("Application: OpenCV vision tracker registered as '{}' (camera={}, detector={})",
+                 tk_cfg.id_tag, cam_cfg.type, det_cfg.use_hsv_mask ? "round+hsv" : "round");
+
+        // Debug-only: open the camera immediately at startup instead of waiting
+        // for a mission mode to activate the module. Useful for verifying that
+        // the webcam + detector + preview pipeline works before wiring it into
+        // FOLLOW/QR_DIVE flows. Production builds should leave this false so
+        // the camera only powers on when actually needed.
+        if (config_->getBool("perception.opencv_vision.auto_start", false)) {
+            opencv_vision_tracker_->start();
+            LOG_INFO("Application: OpenCV vision tracker AUTO-STARTED (debug)");
+        }
+    } else {
+        LOG_INFO("Application: OpenCV vision tracker disabled by config");
+    }
+#else
+    if (config_->getBool("perception.opencv_vision.enabled", false)) {
+        LOG_WARN("Application: perception.opencv_vision.enabled=true but build has UAV_HAS_OPENCV=OFF "
+                 "(install OpenCV and re-run CMake to enable real-camera tracking)");
+    }
+#endif
+
+    LOG_INFO("Application: perception initialized ({} modules)",
+             perception_->registered().size());
+    return true;
+}
+
 bool Application::initMission() {
     mission::MissionDirector::Config mcfg;
 
@@ -213,9 +340,23 @@ bool Application::initMission() {
     mcfg.qr_dive.climb_timeout_s = config_->getDouble("mission.qr_dive.climb_timeout_s", 30.0);
     mcfg.qr_dive.use_position_dive = config_->getBool("mission.qr_dive.use_position_dive", true);
     mcfg.qr_dive.dive_step_interval_s = config_->getDouble("mission.qr_dive.dive_step_interval_s", 0.5);
+    mcfg.qr_dive.use_perception_terminal = config_->getBool("mission.qr_dive.use_perception_terminal", true);
+    mcfg.qr_dive.perception_lock_age_s = config_->getDouble("mission.qr_dive.perception_lock_age_s", 0.5);
+    mcfg.qr_dive.perception_module_id = config_->getString("mission.qr_dive.perception_module", "qr_simple");
+
+    mcfg.qr_dive_on_complete = mission::parsePostDiveAction(
+        config_->getString("mission.qr_dive.on_complete", "rtl"),
+        mission::PostDiveAction::RTL);
+    mcfg.qr_dive_perception_module = mcfg.qr_dive.perception_module_id;
+
+    mcfg.follow_vision_fallback = config_->getBool("mission.follow.vision_fallback", false);
+    mcfg.follow_vision_module = config_->getString("mission.follow.vision_module", "vision_tracker");
+    mcfg.follow.vision_fallback = mcfg.follow_vision_fallback;
+    mcfg.follow.vision_module_id = mcfg.follow_vision_module;
+    mcfg.follow.vision_lock_age_s = config_->getDouble("mission.follow.vision_lock_age_s", 0.5);
 
     mission_ = std::make_shared<mission::MissionDirector>(
-        nav_engine_, commander_, world_model_, event_bus_, mcfg);
+        nav_engine_, commander_, world_model_, event_bus_, perception_, mcfg);
     mission_->initialize();
 
     LOG_INFO("Application: mission initialized");
@@ -251,7 +392,17 @@ void Application::subscribeEvents() {
         [this](const infra::Event&) { nav_engine_->revalidateRoute(); });
 
     event_bus_->subscribe(infra::EventType::BOUNDARY_UPDATED,
-        [this](const infra::Event&) { nav_engine_->revalidateRoute(); });
+        [this](const infra::Event&) {
+            // Overlay configured altitude limits onto any boundary delivered
+            // via MAVLink/STATUSTEXT so we never run with parser defaults.
+            auto b = world_model_->getBoundary();
+            if (b.has_value()) {
+                b->min_altitude = config_->getDouble("safety.min_altitude_m", b->min_altitude);
+                b->max_altitude = config_->getDouble("safety.max_altitude_m", b->max_altitude);
+                world_model_->setBoundary(*b);
+            }
+            nav_engine_->revalidateRoute();
+        });
 
     event_bus_->subscribe(infra::EventType::MODE_COMMAND_RECEIVED,
         [this](const infra::Event& e) {
@@ -289,11 +440,13 @@ void Application::loadBoundaryFromConfig() {
 
     core::Boundary boundary;
     for (const auto& v : node) {
-        double lat = v["lat"].as<double>(0.0);
-        double lon = v["lon"].as<double>(0.0);
-        if (std::abs(lat) > 0.001 && std::abs(lon) > 0.001) {
-            boundary.vertices.emplace_back(lat, lon, 0.0);
-        }
+        // Use sentinel NaN to detect missing keys so that valid boundaries near
+        // the equator/prime meridian (lat=0 or lon=0) are not silently dropped.
+        double lat = v["lat"].as<double>(std::numeric_limits<double>::quiet_NaN());
+        double lon = v["lon"].as<double>(std::numeric_limits<double>::quiet_NaN());
+        if (std::isnan(lat) || std::isnan(lon)) continue;
+        if (lat < -90.0 || lat > 90.0 || lon < -180.0 || lon > 180.0) continue;
+        boundary.vertices.emplace_back(lat, lon, 0.0);
     }
 
     boundary.min_altitude = config_->getDouble("safety.min_altitude_m", 30.0);
@@ -337,10 +490,17 @@ void Application::loadHSSFromConfig() {
 // =============================================================================
 
 void Application::handleFailsafe(const infra::Event& event) {
-    static auto last_failsafe_time = std::chrono::steady_clock::time_point{};
-    auto now = time::nowSteady();
-    if (time::durationS(last_failsafe_time, now) < 10.0) return;
-    last_failsafe_time = now;
+    // Throttle each failsafe type independently so that, e.g., a battery event
+    // is not silenced by a recent GPS event.
+    static std::map<infra::EventType, std::chrono::steady_clock::time_point> last_by_type;
+    static std::mutex throttle_mutex;
+    {
+        std::lock_guard lock(throttle_mutex);
+        auto now = time::nowSteady();
+        auto& last = last_by_type[event.type];
+        if (time::durationS(last, now) < 10.0) return;
+        last = now;
+    }
 
     switch (event.type) {
         case infra::EventType::GPS_QUALITY_CRITICAL:
@@ -483,6 +643,16 @@ void Application::mainLoop() {
 
     while (running_ && !shutdown_requested_) {
         mission_->tick();
+
+#ifdef UAV_HAS_OPENCV
+        // OpenCV HighGUI requires imshow / waitKey to run on the main
+        // thread; the vision tracker stages frames from its worker and we
+        // pump them out here so the preview window actually appears under
+        // Windows.
+        if (opencv_vision_tracker_ && opencv_vision_tracker_->previewEnabled()) {
+            opencv_vision_tracker_->tickPreviewMainThread();
+        }
+#endif
 
         auto now = std::chrono::steady_clock::now();
 

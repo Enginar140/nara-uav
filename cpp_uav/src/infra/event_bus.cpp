@@ -1,5 +1,8 @@
 #include "uav/infra/event_bus.hpp"
 #include "uav/core/time_utils.hpp"
+#include "uav/infra/log_manager.hpp"
+
+#include <algorithm>
 
 namespace uav::infra {
 
@@ -28,10 +31,19 @@ void EventBus::unsubscribe(uint64_t id) {
 }
 
 void EventBus::publish(EventType type, std::any payload) {
-    std::lock_guard lock(queue_mutex_);
-    if (queue_.size() < max_queue_) {
-        queue_.emplace(type, std::move(payload));
-        queue_cv_.notify_one();
+    {
+        std::lock_guard lock(queue_mutex_);
+        if (queue_.size() < max_queue_) {
+            queue_.emplace(type, std::move(payload));
+            queue_cv_.notify_one();
+            return;
+        }
+    }
+    // Drop with throttled warning so silent loss is at least visible.
+    auto dropped = ++dropped_count_;
+    if ((dropped & 0xFF) == 1) {
+        LOG_WARN("EventBus: queue full (max={}), dropped {} events (latest type={})",
+                 max_queue_, dropped, toString(type));
     }
 }
 
@@ -52,16 +64,14 @@ void EventBus::stop() {
 
 void EventBus::dispatchLoop() {
     while (running_) {
-        Event event(EventType::SYSTEM_STARTED);
-        {
-            std::unique_lock lock(queue_mutex_);
-            queue_cv_.wait_for(lock, std::chrono::milliseconds(50),
-                               [this] { return !queue_.empty() || !running_; });
-            if (!running_ && queue_.empty()) break;
-            if (queue_.empty()) continue;
-            event = std::move(queue_.front());
-            queue_.pop();
-        }
+        std::unique_lock lock(queue_mutex_);
+        queue_cv_.wait_for(lock, std::chrono::milliseconds(50),
+                           [this] { return !queue_.empty() || !running_; });
+        if (!running_ && queue_.empty()) break;
+        if (queue_.empty()) continue;
+        Event event = std::move(queue_.front());
+        queue_.pop();
+        lock.unlock();
         dispatchEvent(event);
     }
 }
@@ -74,8 +84,10 @@ void EventBus::dispatchEvent(const Event& event) {
     for (const auto& sub : it->second) {
         try {
             sub.handler(event);
+        } catch (const std::exception& e) {
+            LOG_ERROR("EventBus: handler for {} threw: {}", toString(event.type), e.what());
         } catch (...) {
-            // Swallow handler exceptions to protect dispatch loop
+            LOG_ERROR("EventBus: handler for {} threw unknown exception", toString(event.type));
         }
     }
 }
@@ -96,10 +108,13 @@ std::string toString(EventType type) {
         case EventType::MAVLINK_DISCONNECTED: return "MAVLINK_DISCONNECTED";
         case EventType::HEARTBEAT_TIMEOUT:    return "HEARTBEAT_TIMEOUT";
         case EventType::HEARTBEAT_RECOVERED:  return "HEARTBEAT_RECOVERED";
+        case EventType::HEARTBEAT_RECEIVED:   return "HEARTBEAT_RECEIVED";
         case EventType::GPS_QUALITY_LOW:      return "GPS_QUALITY_LOW";
         case EventType::GPS_QUALITY_CRITICAL: return "GPS_QUALITY_CRITICAL";
         case EventType::BATTERY_LOW:          return "BATTERY_LOW";
         case EventType::BATTERY_CRITICAL:     return "BATTERY_CRITICAL";
+        case EventType::PARAMS_READY:         return "PARAMS_READY";
+        case EventType::PERCEPTION_UPDATED:   return "PERCEPTION_UPDATED";
         case EventType::SYSTEM_STARTED:       return "SYSTEM_STARTED";
         case EventType::SYSTEM_STOPPING:      return "SYSTEM_STOPPING";
     }

@@ -7,6 +7,7 @@
 #include "uav/mission/ardupilot_mode.hpp"
 #include "uav/nav/navigation_engine.hpp"
 #include "uav/comm/flight_commander.hpp"
+#include "uav/perception/perception_engine.hpp"
 #include "uav/world_model/world_model.hpp"
 #include "uav/infra/event_bus.hpp"
 
@@ -17,18 +18,33 @@
 
 namespace uav::mission {
 
+/// Post-QR_DIVE behaviour. Driven by `mission.qr_dive.on_complete` in yaml.
+enum class PostDiveAction {
+    RTL,     // hand control to ArduPilot RTL (default; safest)
+    PATROL,  // resume autonomous patrol pattern
+    LOITER   // ArduPilot LOITER mode (in-place orbit at current altitude)
+};
+
+const char* toString(PostDiveAction action);
+PostDiveAction parsePostDiveAction(const std::string& s, PostDiveAction fallback);
+
 class MissionDirector {
 public:
     struct Config {
         PatrolMode::Config patrol;
         FollowMode::Config follow;
         QRDiveMode::Config qr_dive;
+        PostDiveAction qr_dive_on_complete = PostDiveAction::RTL;
+        bool follow_vision_fallback = false;
+        std::string follow_vision_module = "vision_tracker";
+        std::string qr_dive_perception_module = "qr_simple";
     };
 
     MissionDirector(std::shared_ptr<nav::NavigationEngine> nav,
                     std::shared_ptr<comm::FlightCommander> commander,
                     std::shared_ptr<world_model::WorldModel> world_model,
                     std::shared_ptr<infra::EventBus> event_bus,
+                    std::shared_ptr<perception::PerceptionEngine> perception,
                     Config config = {});
 
     void initialize();
@@ -58,7 +74,10 @@ private:
     std::shared_ptr<comm::FlightCommander> commander_;
     std::shared_ptr<world_model::WorldModel> world_model_;
     std::shared_ptr<infra::EventBus> event_bus_;
+    std::shared_ptr<perception::PerceptionEngine> perception_;
     Config config_;
+
+    void onQRDiveComplete();
 
     std::unique_ptr<PatrolMode> patrol_;
     std::unique_ptr<FollowMode> follow_;
@@ -70,6 +89,7 @@ private:
     uint64_t transition_count_ = 0;
 
     IMissionMode* activeHandler();
+    IMissionMode* handlerForMode(core::MissionMode mode);
     bool validateTransition(core::MissionMode from, core::MissionMode to) const;
     void executeTransition(core::MissionMode from, core::MissionMode to);
 };

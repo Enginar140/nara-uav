@@ -185,8 +185,15 @@ void SafetyMonitor::checkComm() {
     state_.comm_loss = !heartbeat_ok_.load();
 
     if (state_.comm_loss && !was_lost) {
+        // Failsafe layer subscribes to HEARTBEAT_TIMEOUT; emit both so any
+        // listener gets a single canonical "we lost the link" notification.
+        event_bus_->publish(infra::EventType::HEARTBEAT_TIMEOUT);
         event_bus_->publish(infra::EventType::MAVLINK_DISCONNECTED);
         LOG_WARN("SafetyMonitor: comm loss detected");
+    } else if (!state_.comm_loss && was_lost) {
+        event_bus_->publish(infra::EventType::HEARTBEAT_RECOVERED);
+        event_bus_->publish(infra::EventType::MAVLINK_CONNECTED);
+        LOG_INFO("SafetyMonitor: comm recovered");
     }
 }
 

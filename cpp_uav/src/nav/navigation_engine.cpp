@@ -150,6 +150,61 @@ bool NavigationEngine::flyLocalVelocity(float vn, float ve, float vd, float yaw_
     return commander_->setLocalVelocity(vn, ve, vd, yaw_rate);
 }
 
+// =====================================================================
+// Local control wrappers (feature/local-control fork).
+// All four delegate to FlightCommander after command-rate throttling.
+// =====================================================================
+
+bool NavigationEngine::flyBodyOffset(float forward_m, float right_m, float down_m, float yaw_deg) {
+    if (shouldThrottleCommand()) return true;
+    last_cmd_time_ = time::nowSteady();
+    return commander_->flyToBodyOffset(forward_m, right_m, down_m, yaw_deg);
+}
+
+bool NavigationEngine::flyLocalOffset(float north_m, float east_m, float down_m, float yaw_deg) {
+    if (shouldThrottleCommand()) return true;
+    last_cmd_time_ = time::nowSteady();
+    return commander_->flyToLocalOffset(north_m, east_m, down_m, yaw_deg);
+}
+
+bool NavigationEngine::flyBearing(float bearing_deg, float distance_m, float altitude_offset_m, float yaw_deg) {
+    if (shouldThrottleCommand()) return true;
+    last_cmd_time_ = time::nowSteady();
+    return commander_->flyToBearingOffset(bearing_deg, distance_m, altitude_offset_m, yaw_deg);
+}
+
+bool NavigationEngine::pursueVisionTarget(float yaw_offset_deg, float pitch_offset_deg, float range_m, float yaw_deg) {
+    if (shouldThrottleCommand()) return true;
+    last_cmd_time_ = time::nowSteady();
+    return commander_->flyToVisionTarget(yaw_offset_deg, pitch_offset_deg, range_m, yaw_deg);
+}
+
+bool NavigationEngine::dispatchPerceptionTarget(const perception::PerceptionTarget& t) {
+    const float yaw = t.yaw_deg.value_or(std::numeric_limits<float>::quiet_NaN());
+    switch (t.frame) {
+        case perception::PerceptionFrame::BODY:
+            return flyBodyOffset(t.a, t.b, t.c, yaw);
+        case perception::PerceptionFrame::LOCAL_NED:
+            return flyLocalOffset(t.a, t.b, t.c, yaw);
+        case perception::PerceptionFrame::POLAR:
+            return flyBearing(t.a, t.b, t.c, yaw);
+        case perception::PerceptionFrame::VISION_LOS:
+            return pursueVisionTarget(t.a, t.b, t.c, yaw);
+    }
+    LOG_WARN("NavigationEngine: dispatchPerceptionTarget unknown frame");
+    return false;
+}
+
+bool NavigationEngine::releaseGuidedHold() {
+    // Bypass throttle: this is a one-shot reset that must reach the firmware
+    // even if a fast burst of commands just went out.
+    last_cmd_time_ = time::nowSteady();
+    last_sent_target_.reset();
+    chain_.clear();
+    return commander_->flyToBodyOffset(0.0f, 0.0f, 0.0f,
+                                        std::numeric_limits<float>::quiet_NaN());
+}
+
 void NavigationEngine::clearRoute() {
     chain_.clear();
     last_sent_target_.reset();
