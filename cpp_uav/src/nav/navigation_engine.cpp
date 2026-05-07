@@ -200,6 +200,21 @@ bool NavigationEngine::flyDirectLocked(const core::Position& target, float airsp
         return false;
     }
 
+    if (!escape_command) {
+        auto boundary = world_model_->getBoundary();
+        auto own = currentOwnPositionLocked();
+        if (own.has_value() && boundary.has_value() && boundary->isValid()) {
+            auto zones = world_model_->getActiveHSSZones();
+            if (!planner_->isDirectPathClear(*own, safe_target, *boundary, zones)) {
+                LOG_WARN("NavigationEngine: direct corridor too tight, replanning with turn clearance");
+                chain_.clear();
+                last_sent_target_.reset();
+                last_plan_time_ = {};
+                return planRouteLocked(safe_target, speed);
+            }
+        }
+    }
+
     bool sent = commander_->flyToPosition(safe_target, speed);
     last_cmd_time_ = time::nowSteady();
     if (sent) last_sent_target_ = safe_target;

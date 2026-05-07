@@ -23,6 +23,10 @@ public:
         double hss_buffer_m = 40.0;
         double boundary_buffer_m = 20.0;
         double min_turn_radius_m = 50.0;
+        double turn_safety_margin_m = 50.0;
+        double max_arc_step_deg = 10.0;
+        double max_segment_length_m = 80.0;
+        bool dubins_smoothing_enabled = true;
         int polygon_segments = 12;
     };
 
@@ -36,14 +40,18 @@ public:
                            const core::Boundary& boundary,
                            const std::vector<core::HSSZone>& zones) const;
 
-    void setMinTurnRadius(double radius_m) { config_.min_turn_radius_m = radius_m; }
-    void setConfig(const Config& c) { config_ = c; }
+    void setMinTurnRadius(double radius_m) {
+        config_.min_turn_radius_m = (radius_m > 0.0) ? radius_m : 0.0;
+    }
+    void setConfig(const Config& c) { config_ = c; sanitizeConfig(); }
     const Config& getConfig() const { return config_; }
     const std::shared_ptr<safety::ZoneChecker>& getZoneChecker() const { return zone_checker_; }
 
 private:
     std::shared_ptr<safety::ZoneChecker> zone_checker_;
     Config config_;
+
+    void sanitizeConfig();
 
     struct VNode {
         core::Position pos;
@@ -66,7 +74,8 @@ private:
     AdjList buildAdjacency(
         const std::vector<VNode>& nodes,
         const std::vector<std::vector<core::Position>>& obstacles,
-        const core::Boundary& boundary) const;
+        const core::Boundary& boundary,
+        const std::vector<core::HSSZone>& hss_zones) const;
 
     std::vector<int> dijkstra(const AdjList& adj, int src, int dst) const;
 
@@ -79,6 +88,29 @@ private:
         const std::vector<core::Position>& path,
         const core::Boundary& boundary,
         const std::vector<core::HSSZone>& hss_zones) const;
+
+    std::vector<core::Position> densifyPath(
+        const std::vector<core::Position>& path) const;
+
+    bool isPointSafe(
+        const core::Position& pos,
+        const core::Boundary& boundary,
+        const std::vector<core::HSSZone>& hss_zones,
+        double hss_margin_m) const;
+
+    bool isSegmentSafe(
+        const core::Position& a, const core::Position& b,
+        const core::Boundary& boundary,
+        const std::vector<core::HSSZone>& hss_zones,
+        double hss_margin_m) const;
+
+    bool isPathSafe(
+        const std::vector<core::Position>& path,
+        const core::Boundary& boundary,
+        const std::vector<core::HSSZone>& hss_zones,
+        double hss_margin_m) const;
+
+    double planningHSSMargin() const;
 
     bool isEdgeVisible(
         const core::Position& a, const core::Position& b,

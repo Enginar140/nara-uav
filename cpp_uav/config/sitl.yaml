@@ -28,7 +28,12 @@ safety:
 nav:
   planner:
     hss_buffer_m: 40.0
+    boundary_buffer_m: 20.0
     min_turn_radius_m: 50.0
+    turn_safety_margin_m: 50.0
+    max_arc_step_deg: 10.0
+    max_segment_length_m: 80.0
+    dubins_smoothing_enabled: true
     polygon_segments: 12
   waypoint:
     acceptance_radius_m: 80.0

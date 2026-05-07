@@ -11,7 +11,27 @@
 namespace uav::nav {
 
 PathPlanner::PathPlanner(std::shared_ptr<safety::ZoneChecker> checker, Config config)
-    : zone_checker_(std::move(checker)), config_(config) {}
+    : zone_checker_(std::move(checker)), config_(config) {
+    sanitizeConfig();
+}
+
+void PathPlanner::sanitizeConfig() {
+    auto finiteOr = [](double value, double fallback) {
+        return std::isfinite(value) ? value : fallback;
+    };
+
+    config_.hss_buffer_m = std::max(0.0, finiteOr(config_.hss_buffer_m, 40.0));
+    config_.boundary_buffer_m = std::max(0.0, finiteOr(config_.boundary_buffer_m, 20.0));
+    config_.min_turn_radius_m = std::max(0.0, finiteOr(config_.min_turn_radius_m, 50.0));
+    config_.turn_safety_margin_m = std::max(0.0, finiteOr(config_.turn_safety_margin_m, 50.0));
+    config_.max_arc_step_deg = std::clamp(finiteOr(config_.max_arc_step_deg, 10.0), 2.0, 45.0);
+    config_.max_segment_length_m = std::max(10.0, finiteOr(config_.max_segment_length_m, 80.0));
+    config_.polygon_segments = std::max(8, config_.polygon_segments);
+}
+
+double PathPlanner::planningHSSMargin() const {
+    return config_.hss_buffer_m + std::max(0.0, config_.turn_safety_margin_m);
+}
 
 PathResult PathPlanner::plan(const core::Position& start, const core::Position& goal,
                              const core::Boundary& boundary,
@@ -36,7 +56,7 @@ PathResult PathPlanner::plan(const core::Position& start, const core::Position& 
         return result;
     }
 
-    auto adj = buildAdjacency(nodes, obstacles, boundary);
+    auto adj = buildAdjacency(nodes, obstacles, boundary, hss_zones);
 
     size_t total_edges = 0;
     size_t connected_nodes = 0;
@@ -65,7 +85,16 @@ PathResult PathPlanner::plan(const core::Position& start, const core::Position& 
     }
 
     path = simplifyPath(path, obstacles, boundary);
-    path = smoothTurns(path, boundary, hss_zones);
+    if (config_.dubins_smoothing_enabled) {
+        path = smoothTurns(path, boundary, hss_zones);
+    }
+    path = densifyPath(path);
+
+    if (!isPathSafe(path, boundary, hss_zones, config_.hss_buffer_m)) {
+        result.error = "Planner produced unsafe path after smoothing";
+        result.planning_time_ms = time::elapsedMs(t0);
+        return result;
+    }
 
     for (auto& wp : path) {
         if (std::abs(wp.altitude) < 1e-3) {
@@ -88,15 +117,11 @@ PathResult PathPlanner::plan(const core::Position& start, const core::Position& 
 bool PathPlanner::isDirectPathClear(const core::Position& from, const core::Position& to,
                                     const core::Boundary& boundary,
                                     const std::vector<core::HSSZone>& zones) const {
-    if (zone_checker_->segmentIntersectsAnyHSS(from, to, zones, config_.hss_buffer_m))
-        return false;
-    if (zone_checker_->segmentExitsBoundary(from, to, boundary))
-        return false;
-    return true;
+    return isSegmentSafe(from, to, boundary, zones, planningHSSMargin());
 }
 
 // ---------------------------------------------------------------------------
-// Obstacle expansion: HSS circles → convex polygons with buffer
+// Obstacle expansion: HSS circles -> convex polygons with buffer
 // ---------------------------------------------------------------------------
 
 std::vector<std::vector<core::Position>> PathPlanner::expandObstacles(
@@ -107,7 +132,7 @@ std::vector<std::vector<core::Position>> PathPlanner::expandObstacles(
         if (!zone.active) continue;
         constexpr double kPi = 3.14159265358979323846;
         double chord_compensation = 1.0 / std::cos(kPi / config_.polygon_segments);
-        double r = (zone.radius + config_.hss_buffer_m) * chord_compensation;
+        double r = (zone.radius + planningHSSMargin()) * chord_compensation;
         obstacles.push_back(circleToPolygon(zone.center, r));
     }
     return obstacles;
@@ -149,7 +174,8 @@ std::vector<PathPlanner::VNode> PathPlanner::buildNodes(
 PathPlanner::AdjList PathPlanner::buildAdjacency(
     const std::vector<VNode>& nodes,
     const std::vector<std::vector<core::Position>>& obstacles,
-    const core::Boundary& boundary) const {
+    const core::Boundary& boundary,
+    const std::vector<core::HSSZone>& hss_zones) const {
 
     int n = static_cast<int>(nodes.size());
     AdjList adj(n);
@@ -176,6 +202,11 @@ PathPlanner::AdjList PathPlanner::buildAdjacency(
             if (i == 1 && goal_containing >= 0) skip_a = goal_containing;
             if (j == 0 && start_containing >= 0) skip_b = start_containing;
             if (j == 1 && goal_containing >= 0) skip_b = goal_containing;
+
+            if (!isSegmentSafe(nodes[i].pos, nodes[j].pos, boundary, hss_zones,
+                               config_.hss_buffer_m)) {
+                continue;
+            }
 
             if (isEdgeVisible(nodes[i].pos, nodes[j].pos, obstacles, boundary,
                               skip_a, skip_b)) {
@@ -348,6 +379,7 @@ std::vector<core::Position> PathPlanner::smoothTurns(
     const double R = config_.min_turn_radius_m;
     const double kMinTurnDeg = 15.0;
     constexpr double kPi = 3.14159265358979323846;
+    const double max_step_rad = std::max(2.0, config_.max_arc_step_deg) * geo::kDegToRad;
 
     std::vector<core::Position> smoothed;
     smoothed.push_back(path.front());
@@ -414,7 +446,7 @@ std::vector<core::Position> PathPlanner::smoothTurns(
         if (cross < 0 && arc_span < 0) arc_span += 2.0 * kPi;
         if (cross > 0 && arc_span > 0) arc_span -= 2.0 * kPi;
 
-        int n_pts = std::max(3, static_cast<int>(std::abs(arc_span) / (12.0 * geo::kDegToRad)));
+        int n_pts = std::max(3, static_cast<int>(std::ceil(std::abs(arc_span) / max_step_rad)));
 
         bool arc_safe = true;
         std::vector<core::Position> arc_points;
@@ -430,24 +462,32 @@ std::vector<core::Position> PathPlanner::smoothTurns(
             auto pos = geo::nedToPosition(pt_ned, B);
             pos.altitude = B.altitude;
 
-            if (boundary.isValid() && !geo::isPointInPolygon(pos, boundary.vertices)) {
+            if (!isPointSafe(pos, boundary, hss_zones, planningHSSMargin())) {
                 arc_safe = false;
                 break;
             }
-            for (const auto& zone : hss_zones) {
-                if (!zone.active) continue;
-                double d = geo::haversineDistance(pos, zone.center);
-                if (d < zone.radius + config_.hss_buffer_m) {
-                    arc_safe = false;
-                    break;
-                }
-            }
-            if (!arc_safe) break;
 
             arc_points.push_back(pos);
         }
 
         if (arc_safe && !arc_points.empty()) {
+            if (!isSegmentSafe(smoothed.back(), arc_points.front(), boundary, hss_zones,
+                               planningHSSMargin())) {
+                smoothed.push_back(B);
+                continue;
+            }
+            bool arc_segments_safe = true;
+            for (size_t j = 1; j < arc_points.size(); ++j) {
+                if (!isSegmentSafe(arc_points[j - 1], arc_points[j], boundary, hss_zones,
+                                   planningHSSMargin())) {
+                    arc_segments_safe = false;
+                    break;
+                }
+            }
+            if (!arc_segments_safe) {
+                smoothed.push_back(B);
+                continue;
+            }
             for (const auto& ap : arc_points) {
                 smoothed.push_back(ap);
             }
@@ -457,7 +497,107 @@ std::vector<core::Position> PathPlanner::smoothTurns(
     }
 
     smoothed.push_back(path.back());
+    if (!isPathSafe(smoothed, boundary, hss_zones, config_.hss_buffer_m)) {
+        return path;
+    }
     return smoothed;
+}
+
+std::vector<core::Position> PathPlanner::densifyPath(
+    const std::vector<core::Position>& path) const {
+
+    if (path.size() < 2 || config_.max_segment_length_m <= 1.0) return path;
+
+    std::vector<core::Position> dense;
+    dense.push_back(path.front());
+
+    for (size_t i = 1; i < path.size(); ++i) {
+        const auto a = dense.back();
+        const auto b = path[i];
+        const double dist = geo::haversineDistance(a, b);
+        const int pieces = std::max(1, static_cast<int>(std::ceil(dist / config_.max_segment_length_m)));
+
+        auto ned = geo::positionToNED(b, a);
+        for (int j = 1; j <= pieces; ++j) {
+            const double t = static_cast<double>(j) / pieces;
+            core::Position p = geo::nedToPosition(
+                geo::NED{ned.north * t, ned.east * t, ned.down * t}, a);
+            dense.push_back(p);
+        }
+    }
+
+    return dense;
+}
+
+bool PathPlanner::isPointSafe(
+    const core::Position& pos,
+    const core::Boundary& boundary,
+    const std::vector<core::HSSZone>& hss_zones,
+    double hss_margin_m) const {
+
+    if (boundary.isValid()) {
+        if (!geo::isPointInPolygon(pos, boundary.vertices)) return false;
+        const double boundary_dist = zone_checker_->distanceToBoundary(pos, boundary);
+        if (boundary_dist < config_.boundary_buffer_m) return false;
+    }
+
+    for (const auto& zone : hss_zones) {
+        if (!zone.active) continue;
+        const double d = geo::haversineDistance(pos, zone.center);
+        if (d < zone.radius + hss_margin_m) return false;
+    }
+
+    return true;
+}
+
+bool PathPlanner::isSegmentSafe(
+    const core::Position& a, const core::Position& b,
+    const core::Boundary& boundary,
+    const std::vector<core::HSSZone>& hss_zones,
+    double hss_margin_m) const {
+
+    if (!isPointSafe(a, boundary, hss_zones, hss_margin_m)) return false;
+    if (!isPointSafe(b, boundary, hss_zones, hss_margin_m)) return false;
+
+    for (const auto& zone : hss_zones) {
+        if (!zone.active) continue;
+        if (geo::segmentIntersectsCircle(a, b, zone.center, zone.radius + hss_margin_m)) {
+            return false;
+        }
+    }
+
+    if (boundary.isValid() && zone_checker_->segmentExitsBoundary(a, b, boundary)) {
+        return false;
+    }
+
+    const double dist = geo::haversineDistance(a, b);
+    const int samples = std::max(1, static_cast<int>(std::ceil(dist / std::max(20.0, config_.max_segment_length_m * 0.5))));
+    auto ned = geo::positionToNED(b, a);
+    for (int i = 1; i < samples; ++i) {
+        const double t = static_cast<double>(i) / samples;
+        auto p = geo::nedToPosition(geo::NED{ned.north * t, ned.east * t, ned.down * t}, a);
+        if (!isPointSafe(p, boundary, hss_zones, hss_margin_m)) return false;
+    }
+
+    return true;
+}
+
+bool PathPlanner::isPathSafe(
+    const std::vector<core::Position>& path,
+    const core::Boundary& boundary,
+    const std::vector<core::HSSZone>& hss_zones,
+    double hss_margin_m) const {
+
+    if (path.empty()) return false;
+    for (const auto& p : path) {
+        if (!isPointSafe(p, boundary, hss_zones, hss_margin_m)) return false;
+    }
+    for (size_t i = 1; i < path.size(); ++i) {
+        if (!isSegmentSafe(path[i - 1], path[i], boundary, hss_zones, hss_margin_m)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 } // namespace uav::nav

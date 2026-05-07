@@ -166,8 +166,18 @@ bool Application::initSafety() {
 
 bool Application::initNav() {
     nav::PathPlanner::Config plan_cfg;
-    plan_cfg.hss_buffer_m = config_->getDouble("nav.planner.hss_buffer_m", 40.0);
+    const double safety_hss_buffer = config_->getDouble("safety.hss_buffer_m", 40.0);
+    const double safety_boundary_buffer = config_->getDouble("safety.boundary_buffer_m", 20.0);
+    plan_cfg.hss_buffer_m = config_->getDouble("nav.planner.hss_buffer_m", safety_hss_buffer);
+    plan_cfg.boundary_buffer_m = config_->getDouble(
+        "nav.planner.boundary_buffer_m", safety_boundary_buffer);
     plan_cfg.min_turn_radius_m = config_->getDouble("nav.planner.min_turn_radius_m", 50.0);
+    plan_cfg.turn_safety_margin_m = config_->getDouble(
+        "nav.planner.turn_safety_margin_m", plan_cfg.min_turn_radius_m);
+    plan_cfg.max_arc_step_deg = config_->getDouble("nav.planner.max_arc_step_deg", 10.0);
+    plan_cfg.max_segment_length_m = config_->getDouble("nav.planner.max_segment_length_m", 80.0);
+    plan_cfg.dubins_smoothing_enabled = config_->getBool(
+        "nav.planner.dubins_smoothing_enabled", true);
     plan_cfg.polygon_segments = config_->getInt("nav.planner.polygon_segments", 12);
 
     planner_ = std::make_shared<nav::PathPlanner>(zone_checker_, plan_cfg);
@@ -596,9 +606,12 @@ void Application::applyArduPilotParams() {
     float estimated_r = pr->estimateTurnRadius();
     float safety_factor = 1.2f;
     plan_cfg.min_turn_radius_m = static_cast<double>(estimated_r * safety_factor);
+    plan_cfg.turn_safety_margin_m = std::max(
+        plan_cfg.turn_safety_margin_m, plan_cfg.min_turn_radius_m);
     planner_->setConfig(plan_cfg);
-    LOG_INFO("  PathPlanner: turn radius {:.0f}m -> {:.0f}m (estimated {:.0f}m * {:.1f})",
-             old_turn_r, plan_cfg.min_turn_radius_m, estimated_r, safety_factor);
+    LOG_INFO("  PathPlanner: turn radius {:.0f}m -> {:.0f}m (estimated {:.0f}m * {:.1f}), corridor margin {:.0f}m",
+             old_turn_r, plan_cfg.min_turn_radius_m, estimated_r, safety_factor,
+             plan_cfg.turn_safety_margin_m);
 
     // --- SafetyGate: altitude limits + max velocity ---
     auto gate_cfg = safety_gate_->getConfig();
