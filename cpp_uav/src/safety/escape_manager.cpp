@@ -58,7 +58,8 @@ std::optional<core::Position> EscapeManager::generateEscapeTarget(
 
     for (const auto& zone : zones) {
         double dist = geo::haversineDistance(own.position, zone.center);
-        if (dist < zone.radius) {
+        const double buffer = safety_gate_ ? safety_gate_->getConfig().hss_buffer_m : zone.buffer_distance;
+        if (dist < zone.radius + buffer) {
             return generateHSSEscape(own, zones);
         }
     }
@@ -87,19 +88,23 @@ std::optional<core::Position> EscapeManager::generateHSSEscape(
 
     double nearest_dist = std::numeric_limits<double>::max();
     const core::HSSZone* nearest_zone = nullptr;
+    double nearest_safe_radius = 0.0;
 
     for (const auto& zone : zones) {
         double dist = geo::haversineDistance(own.position, zone.center);
-        if (dist < zone.radius && dist < nearest_dist) {
+        const double buffer = safety_gate_ ? safety_gate_->getConfig().hss_buffer_m : zone.buffer_distance;
+        const double safe_radius = zone.radius + buffer;
+        if (dist < safe_radius && dist < nearest_dist) {
             nearest_dist = dist;
             nearest_zone = &zone;
+            nearest_safe_radius = safe_radius;
         }
     }
 
     if (!nearest_zone) return std::nullopt;
 
     double bearing_away = geo::bearing(nearest_zone->center, own.position);
-    double escape_dist = nearest_zone->radius - nearest_dist + 80.0;
+    double escape_dist = nearest_safe_radius - nearest_dist + 80.0;
 
     auto escape = geo::destinationPoint(own.position, bearing_away, escape_dist);
     escape.altitude = own.position.altitude;

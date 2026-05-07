@@ -74,6 +74,7 @@ private:
     std::thread thread_;
 
     std::chrono::steady_clock::time_point last_lock_time_;
+    std::chrono::steady_clock::time_point last_miss_time_;
     bool last_was_lock_ = false;
 };
 

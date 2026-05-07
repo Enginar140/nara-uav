@@ -87,7 +87,7 @@ void OpenCvVisionTracker::workerLoop() {
             const float yaw_off_deg   = static_cast<float>(
                 std::atan2(det->cx_px - cx0, fx) * kRad2Deg);
             const float pitch_off_deg = static_cast<float>(
-                std::atan2(cy0 - det->cy_px, fy) * kRad2Deg);
+                std::atan2(det->cy_px - cy0, fy) * kRad2Deg);
 
             // own_state is fed via poll(); workerLoop builds a placeholder
             // target with a known-good range. poll() augments with own_state-
@@ -141,7 +141,7 @@ void OpenCvVisionTracker::workerLoop() {
                     + std::tan(snap->a * kDeg2Rad)
                       * (camera_->width() * 0.5f / std::tan(cfg_.h_fov_deg * 0.5 * kDeg2Rad)));
                 const int cy = static_cast<int>(camera_->height() * 0.5f
-                    - std::tan(snap->b * kDeg2Rad)
+                    + std::tan(snap->b * kDeg2Rad)
                       * (camera_->height() * 0.5f / std::tan(cfg_.v_fov_deg * 0.5 * kDeg2Rad)));
                 cv::circle(frame, {cx, cy}, 18, {0, 255, 0}, 2);
                 cv::circle(frame, {cx, cy}, 3, {0, 0, 255}, -1);
@@ -188,10 +188,10 @@ float OpenCvVisionTracker::estimateRange(const FrameDetection& det,
         case RangeMode::ALTITUDE: {
             // Geometric ground-target estimate. Only meaningful when the camera
             // is roughly forward-pitched and the target is on the ground.
-            const double total_pitch_deg = pitch_off_deg + own_state.attitude.pitch;
-            const double t = std::tan(-total_pitch_deg * kDeg2Rad);
-            if (t > 0.05 && own_state.position.altitude > 0.0) {
-                r = static_cast<float>(own_state.position.altitude / t);
+            const double down_angle_deg = pitch_off_deg - own_state.attitude.pitch;
+            const double s = std::sin(down_angle_deg * kDeg2Rad);
+            if (s > 0.05 && own_state.position.altitude > 0.0) {
+                r = static_cast<float>(own_state.position.altitude / s);
             } else {
                 r = cfg_.fixed_range_m;
             }

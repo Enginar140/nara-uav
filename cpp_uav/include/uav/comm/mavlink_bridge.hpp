@@ -60,6 +60,7 @@ private:
 
     static constexpr int HEARTBEAT_TIMEOUT_MS = 5000;
     std::atomic<bool> heartbeat_timeout_{false};
+    std::atomic<bool> params_requested_{false};
 
     mutable std::recursive_mutex stats_mutex_;
     Stats stats_;

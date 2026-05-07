@@ -87,7 +87,7 @@ void SafetyMonitor::checkHSS(const core::UAVState& own,
                               const std::vector<core::HSSZone>& zones) {
     for (const auto& zone : zones) {
         double dist = geo::haversineDistance(own.position, zone.center);
-        if (dist < zone.radius) {
+        if (dist < zone.radius + config_.hss_buffer_m) {
             state_.hss_violations.push_back(zone.id);
             event_bus_->publish(infra::EventType::HSS_VIOLATION, zone.id);
         }

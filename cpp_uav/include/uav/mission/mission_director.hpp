@@ -86,12 +86,13 @@ private:
 
     core::MissionMode current_mode_ = core::MissionMode::ARDUPILOT;
     mutable std::recursive_mutex mode_mutex_;
+    mutable std::recursive_mutex transition_mutex_;
     uint64_t transition_count_ = 0;
 
     IMissionMode* activeHandler();
     IMissionMode* handlerForMode(core::MissionMode mode);
     bool validateTransition(core::MissionMode from, core::MissionMode to) const;
-    void executeTransition(core::MissionMode from, core::MissionMode to);
+    bool executeTransition(core::MissionMode from, core::MissionMode to);
 };
 
 } // namespace uav::mission

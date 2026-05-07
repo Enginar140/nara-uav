@@ -122,8 +122,8 @@ std::optional<ParsedStatusText> StatusTextParser::parseRIV(const std::string& te
 // HSS:COUNT:ID1:LAT1:LON1:RAD1:ID2:LAT2:LON2:RAD2:...
 std::optional<ParsedStatusText> StatusTextParser::parseHSS(const std::string& text) {
     auto parts = split(text, ':');
-    if (parts.size() < 6) {
-        LOG_WARN("Invalid HSS format (need >=6 fields): {}", text);
+    if (parts.size() < 2) {
+        LOG_WARN("Invalid HSS format (need count field): {}", text);
         return std::nullopt;
     }
 
@@ -133,6 +133,10 @@ std::optional<ParsedStatusText> StatusTextParser::parseHSS(const std::string& te
 
         int count = toInt(parts[1]);
         result.hss_count = count;
+        if (count == 0) {
+            LOG_INFO("Parsed HSS: 0 zones");
+            return result;
+        }
 
         int idx = 2;
         for (int i = 0; i < count; i++) {

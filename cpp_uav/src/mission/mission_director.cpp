@@ -89,6 +89,7 @@ void MissionDirector::onQRDiveComplete() {
 }
 
 bool MissionDirector::requestMode(core::MissionMode mode) {
+    std::lock_guard transition_lock(transition_mutex_);
     core::MissionMode from;
     {
         std::lock_guard lock(mode_mutex_);
@@ -100,11 +101,11 @@ bool MissionDirector::requestMode(core::MissionMode mode) {
         }
         from = current_mode_;
     }
-    executeTransition(from, mode);
-    return true;
+    return executeTransition(from, mode);
 }
 
 void MissionDirector::forceMode(core::MissionMode mode) {
+    std::lock_guard transition_lock(transition_mutex_);
     core::MissionMode from;
     {
         std::lock_guard lock(mode_mutex_);
@@ -113,7 +114,7 @@ void MissionDirector::forceMode(core::MissionMode mode) {
     }
     LOG_INFO("MissionDirector: operator force {} -> {}",
              core::toString(from), core::toString(mode));
-    executeTransition(from, mode);
+    (void)executeTransition(from, mode);
 }
 
 core::MissionMode MissionDirector::getCurrentMode() const {
@@ -133,6 +134,7 @@ void MissionDirector::tick() {
     auto own = world_model_->getOwnState();
     if (!own.isValid()) return;
 
+    std::lock_guard transition_lock(transition_mutex_);
     core::MissionMode mode_snapshot;
     IMissionMode* handler = nullptr;
     bool needs_operator_override = false;
@@ -177,11 +179,13 @@ void MissionDirector::handleModeCommand(const comm::ParsedModeCommand& cmd) {
 void MissionDirector::triggerRTL(const std::string& reason) {
     LOG_WARN("MissionDirector: RTL triggered - {}", reason);
 
+    std::lock_guard transition_lock(transition_mutex_);
     std::lock_guard lock(mode_mutex_);
     auto* handler = activeHandler();
     if (handler) handler->onExit();
 
     current_mode_ = core::MissionMode::ARDUPILOT;
+    transition_count_++;
     ardupilot_->onEnter();
     (void)commander_->setMode(comm::ArduPilotMode::RTL);
 
@@ -243,8 +247,9 @@ bool MissionDirector::validateTransition(core::MissionMode from,
     return true;
 }
 
-void MissionDirector::executeTransition(core::MissionMode from,
+bool MissionDirector::executeTransition(core::MissionMode from,
                                         core::MissionMode to) {
+    std::lock_guard transition_lock(transition_mutex_);
     LOG_INFO("MissionDirector: {} -> {}", core::toString(from), core::toString(to));
 
     // Run onExit on the *previous* handler without holding mode_mutex_.
@@ -258,11 +263,38 @@ void MissionDirector::executeTransition(core::MissionMode from,
     }
 
     // GUIDED MUST be active before onEnter (onEnter may send flight commands).
-    // The setMode + brief settle wait happens outside any mutex so that
-    // operator/tick paths are not blocked.
+    // The setMode + confirmation wait is serialized by transition_mutex_ so
+    // tick/event handlers cannot run the old and new mode concurrently.
     if (to != core::MissionMode::ARDUPILOT && !commander_->isInGuidedMode()) {
-        (void)commander_->setMode(comm::ArduPilotMode::GUIDED);
-        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        if (!commander_->setMode(comm::ArduPilotMode::GUIDED)) {
+            LOG_WARN("MissionDirector: failed to send GUIDED mode command; staying in ARDUPILOT");
+            {
+                std::lock_guard lock(mode_mutex_);
+                current_mode_ = core::MissionMode::ARDUPILOT;
+                transition_count_++;
+            }
+            ardupilot_->onEnter();
+            event_bus_->publish(infra::EventType::MODE_CHANGED,
+                                static_cast<int>(core::MissionMode::ARDUPILOT));
+            return false;
+        }
+
+        auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while (!commander_->isInGuidedMode() && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        if (!commander_->isInGuidedMode()) {
+            LOG_WARN("MissionDirector: GUIDED mode not confirmed; staying in ARDUPILOT");
+            {
+                std::lock_guard lock(mode_mutex_);
+                current_mode_ = core::MissionMode::ARDUPILOT;
+                transition_count_++;
+            }
+            ardupilot_->onEnter();
+            event_bus_->publish(infra::EventType::MODE_CHANGED,
+                                static_cast<int>(core::MissionMode::ARDUPILOT));
+            return false;
+        }
     }
 
     // Clear sticky guided_state (yaw target, last waypoint) on every transition
@@ -284,6 +316,7 @@ void MissionDirector::executeTransition(core::MissionMode from,
 
     event_bus_->publish(infra::EventType::MODE_CHANGED,
                         static_cast<int>(to));
+    return true;
 }
 
 } // namespace uav::mission

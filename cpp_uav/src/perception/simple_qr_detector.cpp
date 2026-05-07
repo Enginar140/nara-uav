@@ -83,7 +83,6 @@ std::optional<PerceptionTarget> SimpleQRDetector::poll(const core::UAVState& /*o
     }
 
     if (!config_.expected_payload.empty() &&
-        !injected_->label.empty() &&
         injected_->label != config_.expected_payload) {
         // Wrong QR payload; ignore.
         return std::nullopt;

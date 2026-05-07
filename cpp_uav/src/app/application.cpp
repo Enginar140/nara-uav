@@ -427,7 +427,7 @@ void Application::subscribeEvents() {
                     auto own = world_model_->getOwnState();
                     auto escape = escape_manager_->generateCollisionEscape(own, threat);
                     if (escape.has_value()) {
-                        nav_engine_->flyDirect(*escape);
+                        nav_engine_->flyEscapeDirect(*escape);
                     }
                 }
             }
@@ -536,7 +536,7 @@ void Application::handleEscapeNeeded(const core::SafetyState& safety) {
             auto escape = escape_manager_->generateBoundaryEscape(own, *boundary);
             if (escape.has_value()) {
                 LOG_WARN("Application: executing boundary escape");
-                nav_engine_->flyDirect(*escape);
+                nav_engine_->flyEscapeDirect(*escape);
                 return;
             }
         }
@@ -547,7 +547,7 @@ void Application::handleEscapeNeeded(const core::SafetyState& safety) {
         auto escape = escape_manager_->generateHSSEscape(own, zones);
         if (escape.has_value()) {
             LOG_WARN("Application: executing HSS escape");
-            nav_engine_->flyDirect(*escape);
+            nav_engine_->flyEscapeDirect(*escape);
             return;
         }
     }
@@ -557,7 +557,7 @@ void Application::handleEscapeNeeded(const core::SafetyState& safety) {
             own, safety.active_threats.front());
         if (escape.has_value()) {
             LOG_WARN("Application: executing collision escape");
-            nav_engine_->flyDirect(*escape);
+            nav_engine_->flyEscapeDirect(*escape);
         }
     }
 }

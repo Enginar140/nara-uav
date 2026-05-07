@@ -31,6 +31,7 @@ FlightCommander::FlightCommander(std::shared_ptr<ConnectionManager> conn,
 
 bool FlightCommander::flyToPosition(const core::Position& target, float ground_speed_ms) {
     std::lock_guard lock(cmd_mutex_);
+    updateAckTimeoutLocked();
 
     if (isPositionDuplicate(target)) return true;
 
@@ -48,12 +49,14 @@ bool FlightCommander::flyToPosition(const core::Position& target, float ground_s
         static_cast<float>(target.altitude)
     );
 
-    last_position_cmd_ = target;
-    has_last_position_cmd_ = true;
-    pending_cmd_id_ = MAV_CMD_DO_REPOSITION;
-    commands_sent_++;
-    last_ack_status_ = AckStatus::WAITING;
-    return sendMAVLinkMessage(msg);
+    bool sent = sendMAVLinkMessage(msg);
+    if (sent) {
+        last_position_cmd_ = target;
+        has_last_position_cmd_ = true;
+        commands_sent_++;
+        markAckPending(MAV_CMD_DO_REPOSITION);
+    }
+    return sent;
 }
 
 bool FlightCommander::flyToLocalPosition(float north_m, float east_m, float down_m) {
@@ -74,8 +77,9 @@ bool FlightCommander::flyToLocalPosition(float north_m, float east_m, float down
         0, 0
     );
 
-    commands_sent_++;
-    return sendMAVLinkMessage(msg);
+    bool sent = sendMAVLinkMessage(msg);
+    if (sent) commands_sent_++;
+    return sent;
 }
 
 bool FlightCommander::setLocalVelocity(float vn, float ve, float vd, float yaw_rate) {
@@ -100,8 +104,9 @@ bool FlightCommander::setLocalVelocity(float vn, float ve, float vd, float yaw_r
         0, yaw_rate
     );
 
-    commands_sent_++;
-    return sendMAVLinkMessage(msg);
+    bool sent = sendMAVLinkMessage(msg);
+    if (sent) commands_sent_++;
+    return sent;
 }
 
 // =====================================================================
@@ -154,8 +159,9 @@ bool FlightCommander::sendLocalNedTarget(uint8_t frame, float x, float y, float 
         yaw_rad, 0.0f                      // yaw (rad), yaw_rate (masked off)
     );
 
-    commands_sent_++;
-    return sendMAVLinkMessage(msg);
+    bool sent = sendMAVLinkMessage(msg);
+    if (sent) commands_sent_++;
+    return sent;
 }
 
 bool FlightCommander::flyToBodyOffset(float forward_m, float right_m, float down_m, float yaw_deg) {
@@ -224,10 +230,12 @@ bool FlightCommander::changeHeading(float heading_deg, HeadingType type,
     LOG_INFO("FlightCommander::changeHeading: heading={:.1f}° mavlink_type={:.0f} accel={:.1f}",
              heading_deg, mavlinkHeadingTypeParam(type), accel_limit_rad_s2);
 
-    pending_cmd_id_ = kMavCmdGuidedChangeHeading;
-    commands_sent_++;
-    last_ack_status_ = AckStatus::WAITING;
-    return sendMAVLinkMessage(msg);
+    bool sent = sendMAVLinkMessage(msg);
+    if (sent) {
+        commands_sent_++;
+        markAckPending(kMavCmdGuidedChangeHeading);
+    }
+    return sent;
 }
 
 // MAV_CMD_GUIDED_CHANGE_SPEED (43000) — param1 SPEED_TYPE, param2 speed (m/s), param3 accel (m/s²)
@@ -260,10 +268,12 @@ bool FlightCommander::changeAirspeed(float speed_ms, float acceleration_ms2, boo
     LOG_INFO("FlightCommander::changeAirspeed: speed={:.1f} m/s airspeed={} accel={:.1f} m/s²",
              speed_ms, use_airspeed ? "yes" : "no", acceleration_ms2);
 
-    pending_cmd_id_ = kMavCmdGuidedChangeSpeed;
-    commands_sent_++;
-    last_ack_status_ = AckStatus::WAITING;
-    return sendMAVLinkMessage(msg);
+    bool sent = sendMAVLinkMessage(msg);
+    if (sent) {
+        commands_sent_++;
+        markAckPending(kMavCmdGuidedChangeSpeed);
+    }
+    return sent;
 }
 
 // MAV_CMD_GUIDED_CHANGE_ALTITUDE (43001) — rate param3, altitude param7
@@ -299,10 +309,12 @@ bool FlightCommander::changeAltitude(float altitude_m, float climb_rate_ms) {
     LOG_INFO("FlightCommander::changeAltitude: alt={:.1f} m rate={:.1f} m/s",
              altitude_m, climb_rate_ms);
 
-    pending_cmd_id_ = kMavCmdGuidedChangeAltitude;
-    commands_sent_++;
-    last_ack_status_ = AckStatus::WAITING;
-    return sendMAVLinkMessage(msg);
+    bool sent = sendMAVLinkMessage(msg);
+    if (sent) {
+        commands_sent_++;
+        markAckPending(kMavCmdGuidedChangeAltitude);
+    }
+    return sent;
 }
 
 bool FlightCommander::setMode(ArduPilotMode mode) {
@@ -323,10 +335,12 @@ bool FlightCommander::setMode(ArduPilotMode mode) {
     LOG_INFO("FlightCommander: setMode({}) param1={} param2={} (current={})",
              toString(mode), cmd.param1, cmd.param2, toString(current_mode_.load()));
 
-    pending_cmd_id_ = MAV_CMD_DO_SET_MODE;
-    commands_sent_++;
-    last_ack_status_ = AckStatus::WAITING;
-    return sendMAVLinkMessage(msg);
+    bool sent = sendMAVLinkMessage(msg);
+    if (sent) {
+        commands_sent_++;
+        markAckPending(MAV_CMD_DO_SET_MODE);
+    }
+    return sent;
 }
 
 bool FlightCommander::arm() {
@@ -342,10 +356,12 @@ bool FlightCommander::arm() {
     );
 
     LOG_INFO("FlightCommander: arming");
-    pending_cmd_id_ = MAV_CMD_COMPONENT_ARM_DISARM;
-    commands_sent_++;
-    last_ack_status_ = AckStatus::WAITING;
-    return sendMAVLinkMessage(msg);
+    bool sent = sendMAVLinkMessage(msg);
+    if (sent) {
+        commands_sent_++;
+        markAckPending(MAV_CMD_COMPONENT_ARM_DISARM);
+    }
+    return sent;
 }
 
 bool FlightCommander::disarm() {
@@ -361,10 +377,12 @@ bool FlightCommander::disarm() {
     );
 
     LOG_INFO("FlightCommander: disarming");
-    pending_cmd_id_ = MAV_CMD_COMPONENT_ARM_DISARM;
-    commands_sent_++;
-    last_ack_status_ = AckStatus::WAITING;
-    return sendMAVLinkMessage(msg);
+    bool sent = sendMAVLinkMessage(msg);
+    if (sent) {
+        commands_sent_++;
+        markAckPending(MAV_CMD_COMPONENT_ARM_DISARM);
+    }
+    return sent;
 }
 
 void FlightCommander::updateModeFromHeartbeat(uint32_t custom_mode) {
@@ -384,22 +402,72 @@ void FlightCommander::updateArmedFromHeartbeat(uint8_t base_mode) {
     armed_ = (base_mode & MAV_MODE_FLAG_SAFETY_ARMED) != 0;
 }
 
-void FlightCommander::handleCommandAck(uint16_t cmd_id, uint8_t result) {
-    commands_acked_++;
-    last_ack_time_ = std::chrono::steady_clock::now();
+AckStatus FlightCommander::getLastAckStatus() const {
+    std::lock_guard lock(cmd_mutex_);
+    updateAckTimeoutLocked();
+    return last_ack_status_.load();
+}
 
-    if (result == MAV_RESULT_ACCEPTED) {
-        last_ack_status_ = AckStatus::ACCEPTED;
-        LOG_DEBUG("FlightCommander: CMD {} accepted", cmd_id);
-    } else if (result == MAV_RESULT_IN_PROGRESS) {
-        LOG_DEBUG("FlightCommander: CMD {} in progress", cmd_id);
-    } else {
-        last_ack_status_ = AckStatus::REJECTED;
-        LOG_WARN("FlightCommander: CMD {} rejected (result={})", cmd_id, result);
+void FlightCommander::handleCommandAck(uint16_t cmd_id, uint8_t result) {
+    AckCallback cb;
+    {
+        std::lock_guard lock(cmd_mutex_);
+        updateAckTimeoutLocked();
+
+        uint16_t pending = pending_cmd_id_.load();
+        if (pending != 0 && cmd_id != pending) {
+            LOG_DEBUG("FlightCommander: ignoring ACK for CMD {} while waiting for CMD {}",
+                      cmd_id, pending);
+            return;
+        }
+
+        commands_acked_++;
+        last_ack_time_ = std::chrono::steady_clock::now();
+
+        if (result == MAV_RESULT_ACCEPTED) {
+            last_ack_status_ = AckStatus::ACCEPTED;
+            pending_cmd_id_ = 0;
+            LOG_DEBUG("FlightCommander: CMD {} accepted", cmd_id);
+        } else if (result == MAV_RESULT_IN_PROGRESS) {
+            last_ack_status_ = AckStatus::WAITING;
+            LOG_DEBUG("FlightCommander: CMD {} in progress", cmd_id);
+        } else {
+            last_ack_status_ = AckStatus::REJECTED;
+            pending_cmd_id_ = 0;
+            if (cmd_id == MAV_CMD_DO_REPOSITION) {
+                has_last_position_cmd_ = false;
+            }
+            LOG_WARN("FlightCommander: CMD {} rejected (result={})", cmd_id, result);
+        }
+
+        cb = ack_callback_;
     }
 
-    if (ack_callback_) {
-        ack_callback_(cmd_id, result);
+    if (cb) {
+        cb(cmd_id, result);
+    }
+}
+
+void FlightCommander::markAckPending(uint16_t cmd_id) {
+    pending_cmd_id_ = cmd_id;
+    pending_since_ = std::chrono::steady_clock::now();
+    last_ack_status_ = AckStatus::WAITING;
+}
+
+void FlightCommander::updateAckTimeoutLocked() const {
+    if (last_ack_status_.load() != AckStatus::WAITING) return;
+    uint16_t pending = pending_cmd_id_.load();
+    if (pending == 0) return;
+
+    auto elapsed = std::chrono::steady_clock::now() - pending_since_;
+    if (elapsed >= std::chrono::milliseconds(config_.ack_timeout_ms)) {
+        last_ack_status_ = AckStatus::TIMEOUT;
+        if (pending == MAV_CMD_DO_REPOSITION) {
+            has_last_position_cmd_ = false;
+        }
+        pending_cmd_id_ = 0;
+        LOG_WARN("FlightCommander: CMD {} ACK timeout after {}ms",
+                 pending, config_.ack_timeout_ms);
     }
 }
 

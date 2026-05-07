@@ -35,6 +35,62 @@ bool SafetyGate::validatePosition(const core::Position& target) const {
     return true;
 }
 
+bool SafetyGate::isInsideHSS(const core::Position& pos, bool include_buffer) const {
+    auto zones = world_model_->getActiveHSSZones();
+    return checker_->isInsideAnyHSS(pos, zones, include_buffer ? config_.hss_buffer_m : 0.0);
+}
+
+bool SafetyGate::isPositionSafeNow(const core::Position& pos) const {
+    return validatePosition(pos);
+}
+
+bool SafetyGate::validateSegment(const core::Position& from, const core::Position& target) const {
+    if (!validatePosition(target)) return false;
+
+    auto boundary = world_model_->getBoundary();
+    if (boundary.has_value()) {
+        if (!checker_->isInsideBoundary(from, *boundary)) return false;
+        if (checker_->segmentExitsBoundary(from, target, *boundary)) return false;
+    }
+
+    auto zones = world_model_->getActiveHSSZones();
+    if (checker_->isInsideAnyHSS(from, zones, config_.hss_buffer_m)) return false;
+    if (checker_->segmentIntersectsAnyHSS(from, target, zones, config_.hss_buffer_m)) return false;
+
+    return true;
+}
+
+bool SafetyGate::validateEscapeSegment(const core::Position& from, const core::Position& target) const {
+    if (!validatePosition(target)) return false;
+
+    auto boundary = world_model_->getBoundary();
+    if (boundary.has_value()) {
+        if (!checker_->isInsideBoundary(target, *boundary)) return false;
+    }
+
+    auto zones = world_model_->getActiveHSSZones();
+    for (const auto& zone : zones) {
+        if (!zone.active) continue;
+        const double safe_dist = zone.radius + config_.hss_buffer_m;
+        const double from_dist = geo::haversineDistance(from, zone.center);
+        const double target_dist = geo::haversineDistance(target, zone.center);
+        const bool starts_in_zone = from_dist < safe_dist;
+
+        if (starts_in_zone) {
+            if (target_dist < safe_dist || target_dist <= from_dist) {
+                return false;
+            }
+            continue;
+        }
+
+        if (geo::segmentIntersectsCircle(from, target, zone.center, safe_dist)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 bool SafetyGate::validateVelocity(float vn, float ve, float vd) const {
     double speed = std::sqrt(vn * vn + ve * ve + vd * vd);
     if (speed > config_.max_velocity_ms) return false;

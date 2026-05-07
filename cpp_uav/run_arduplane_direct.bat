@@ -36,15 +36,15 @@ echo   Binary  : %AP_BIN%
 echo   Home    : 37.8488,-122.3942,0,0
 echo.
 echo   serial0 / TCP server : 0.0.0.0:5760
-echo                          -> Python test script (tcp:127.0.0.1:5760)
+echo                          -^> Python test script (tcp:127.0.0.1:5760)
 echo   serial1 / TCP server : 0.0.0.0:5762
-echo                          -> Mission Planner (TCP client to localhost:5762)
+echo                          -^> Mission Planner (TCP client to localhost:5762)
 echo   serial2 / UDP-out    : 127.0.0.1:14550
-echo                          -> opsiyonel ek dinleyici (UDP listen :14550)
+echo                          -^> opsiyonel ek dinleyici (UDP listen :14550)
 echo.
 echo   Yeni Cygwin penceresi aciliyor...
 echo.
-echo   Mission Planner'da:  Connect -> TCP -> Server: 127.0.0.1, Port: 5762
+echo   Mission Planner'da:  Connect -^> TCP -^> Server: 127.0.0.1, Port: 5762
 echo   Python test:         py tests\sitl_local_control_test.py tcp:127.0.0.1:5760
 echo.
 echo ========================================
@@ -54,7 +54,7 @@ start "ArduPlane SITL (direct)" "%MINTTY%" -h always -t "ArduPlane SITL (direct)
   "cd %AP_DIR% && ./build/sitl/bin/arduplane --model plane --speedup 1 --home 37.8488,-122.3942,0,0 --defaults Tools/autotest/models/plane.parm --serial0=tcp:5760 --serial1=tcp:5762 --serial2=udpclient:127.0.0.1:14550; echo; echo SITL exited - press Enter to close; read"
 
 echo SITL baslatildi.
-echo   - Mission Planner: TCP -> 127.0.0.1:5762
+echo   - Mission Planner: TCP -^> 127.0.0.1:5762
 echo   - py tests\sitl_local_control_test.py tcp:127.0.0.1:5760
 echo.
 endlocal

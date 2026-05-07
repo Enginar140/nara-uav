@@ -135,12 +135,12 @@ std::vector<PathPlanner::VNode> PathPlanner::buildNodes(
     const std::vector<std::vector<core::Position>>& obstacles) const {
 
     std::vector<VNode> nodes;
-    nodes.push_back({start, -1});
-    nodes.push_back({goal, -1});
+    nodes.push_back({start, -1, -1});
+    nodes.push_back({goal, -1, -1});
 
     for (int obs_idx = 0; obs_idx < static_cast<int>(obstacles.size()); ++obs_idx) {
-        for (const auto& vertex : obstacles[obs_idx]) {
-            nodes.push_back({vertex, obs_idx});
+        for (int vertex_idx = 0; vertex_idx < static_cast<int>(obstacles[obs_idx].size()); ++vertex_idx) {
+            nodes.push_back({obstacles[obs_idx][vertex_idx], obs_idx, vertex_idx});
         }
     }
     return nodes;
@@ -159,6 +159,17 @@ PathPlanner::AdjList PathPlanner::buildAdjacency(
 
     for (int i = 0; i < n; ++i) {
         for (int j = i + 1; j < n; ++j) {
+            if (nodes[i].obstacle_id >= 0 &&
+                nodes[i].obstacle_id == nodes[j].obstacle_id) {
+                const int obs = nodes[i].obstacle_id;
+                const int vertex_count = static_cast<int>(obstacles[obs].size());
+                const int diff = std::abs(nodes[i].vertex_id - nodes[j].vertex_id);
+                const bool adjacent = diff == 1 || diff == vertex_count - 1;
+                if (!adjacent) {
+                    continue;
+                }
+            }
+
             int skip_a = -1;
             int skip_b = -1;
             if (i == 0 && start_containing >= 0) skip_a = start_containing;
@@ -199,6 +210,23 @@ bool PathPlanner::isEdgeVisible(
                 posMatch(b, poly[i]) || posMatch(b, poly[j]))
                 continue;
             if (geo::segmentsIntersect(a, b, poly[i], poly[j])) {
+                return false;
+            }
+        }
+
+        for (double t : {0.25, 0.5, 0.75}) {
+            core::Position sample{
+                a.latitude + (b.latitude - a.latitude) * t,
+                a.longitude + (b.longitude - a.longitude) * t,
+                a.altitude + (b.altitude - a.altitude) * t};
+            if (!geo::isPointInPolygon(sample, poly)) continue;
+
+            double edge_dist = std::numeric_limits<double>::max();
+            for (int i = 0; i < n; ++i) {
+                int j = (i + 1) % n;
+                edge_dist = std::min(edge_dist, geo::distanceToSegment(sample, poly[i], poly[j]));
+            }
+            if (edge_dist > 0.5) {
                 return false;
             }
         }

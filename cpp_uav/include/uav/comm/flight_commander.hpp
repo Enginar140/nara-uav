@@ -151,7 +151,7 @@ public:
 
     uint64_t getCommandsSent() const { return commands_sent_.load(); }
     uint64_t getCommandsAcked() const { return commands_acked_.load(); }
-    AckStatus getLastAckStatus() const { return last_ack_status_.load(); }
+    AckStatus getLastAckStatus() const;
 
 private:
     std::shared_ptr<ConnectionManager> conn_;
@@ -163,18 +163,21 @@ private:
     std::atomic<bool> armed_{false};
     std::atomic<uint64_t> commands_sent_{0};
     std::atomic<uint64_t> commands_acked_{0};
-    std::atomic<AckStatus> last_ack_status_{AckStatus::NONE};
-    std::atomic<uint16_t> pending_cmd_id_{0};
+    mutable std::atomic<AckStatus> last_ack_status_{AckStatus::NONE};
+    mutable std::atomic<uint16_t> pending_cmd_id_{0};
+    mutable std::chrono::steady_clock::time_point pending_since_{};
     std::chrono::steady_clock::time_point last_ack_time_;
 
     AckCallback ack_callback_;
 
-    std::recursive_mutex cmd_mutex_;
+    mutable std::recursive_mutex cmd_mutex_;
     core::Position last_position_cmd_;
-    bool has_last_position_cmd_ = false;
+    mutable bool has_last_position_cmd_ = false;
 
     bool sendMAVLinkMessage(mavlink_message_t& msg);
     bool isPositionDuplicate(const core::Position& target) const;
+    void markAckPending(uint16_t cmd_id);
+    void updateAckTimeoutLocked() const;
 
     /// Internal transport for SET_POSITION_TARGET_LOCAL_NED. \p frame is one
     /// of MAV_FRAME_BODY_OFFSET_NED / MAV_FRAME_LOCAL_OFFSET_NED. Position

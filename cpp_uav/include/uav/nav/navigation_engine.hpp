@@ -10,6 +10,7 @@
 #include <chrono>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <optional>
 
 namespace uav::comm {
@@ -31,6 +32,7 @@ public:
     ChainStatus update(const core::Position& own_pos);
 
     bool flyDirect(const core::Position& target, float airspeed = -1.0f);
+    bool flyEscapeDirect(const core::Position& target, float airspeed = -1.0f);
 
     /// Legacy local-position / local-velocity APIs.
     /// Stock ArduPlane silently ignores LOCAL_NED frame and velocity setpoints.
@@ -104,8 +106,22 @@ private:
     std::chrono::milliseconds min_cmd_interval_{250};
     std::chrono::milliseconds min_plan_interval_{2000};
     std::optional<core::Position> last_sent_target_;
+    mutable std::mutex nav_mutex_;
+    bool escape_active_ = false;
+    std::optional<core::Position> escape_target_;
 
-    bool sendCurrentWaypoint();
+    bool planRouteLocked(const core::Position& goal, float airspeed);
+    ChainStatus updateLocked(const core::Position& own_pos);
+    bool flyDirectLocked(const core::Position& target, float airspeed, bool escape_command);
+    bool sendCurrentWaypointLocked();
+    bool shouldBlockNormalCommandLocked();
+    bool validateProjectedCommandLocked(const core::Position& target, bool escape_command);
+    std::optional<core::Position> currentOwnPositionLocked() const;
+    core::Position bodyOffsetToPosition(const core::UAVState& own,
+                                        float forward_m, float right_m, float down_m) const;
+    core::Position localOffsetToPosition(const core::UAVState& own,
+                                         float north_m, float east_m, float down_m) const;
+    bool revalidateRouteLocked();
     bool shouldThrottleCommand() const;
 };
 

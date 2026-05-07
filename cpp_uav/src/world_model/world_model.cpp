@@ -86,6 +86,16 @@ void WorldModel::updateHSSZone(const core::HSSZone& zone) {
     hss_zones_[zone.id] = zone;
 }
 
+void WorldModel::replaceHSSZones(const std::vector<core::HSSZone>& zones) {
+    std::unique_lock lock(hss_mutex_);
+    hss_zones_.clear();
+    for (const auto& zone : zones) {
+        if (zone.active && zone.radius > 0.0) {
+            hss_zones_[zone.id] = zone;
+        }
+    }
+}
+
 void WorldModel::removeHSSZone(int id) {
     std::unique_lock lock(hss_mutex_);
     hss_zones_.erase(id);

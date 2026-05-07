@@ -29,6 +29,7 @@ public:
 
     // HSS zones
     void updateHSSZone(const core::HSSZone& zone);
+    void replaceHSSZones(const std::vector<core::HSSZone>& zones);
     void removeHSSZone(int id);
     std::vector<core::HSSZone> getAllHSSZones() const;
     std::vector<core::HSSZone> getActiveHSSZones() const;

@@ -39,7 +39,7 @@ public:
     void disconnect();
     bool sendMessage(const MAVLinkMessage& msg);
     std::optional<MAVLinkMessage> receiveMessage();
-    bool isConnected() const { return state_ == ConnectionState::CONNECTED; }
+    bool isConnected() const;
     ConnectionState getState() const { return state_.load(); }
     ConnectionStats getStats() const;
     bool reconnect();
@@ -65,7 +65,7 @@ private:
     std::function<void(const MAVLinkMessage&)> message_callback_;
 
     uintptr_t socket_fd_ = 0;
-    uintptr_t client_socket_ = 0;
+    std::atomic<uintptr_t> client_socket_{0};
 
     ProtocolType protocol_type_ = ProtocolType::UDP_SERVER;
     std::string host_;

@@ -117,7 +117,9 @@ bool ConnectionManager::connect() {
     if (!parseConnectionString()) return false;
     if (!createSocket()) return false;
 
-    state_ = ConnectionState::CONNECTED;
+    state_ = (protocol_type_ == ProtocolType::TCP_SERVER)
+                 ? ConnectionState::CONNECTING
+                 : ConnectionState::CONNECTED;
     running_ = true;
     last_data_time_ = std::chrono::steady_clock::now();
 
@@ -127,7 +129,7 @@ bool ConnectionManager::connect() {
 
     {
         std::lock_guard lock(stats_mutex_);
-        stats_.state = ConnectionState::CONNECTED;
+        stats_.state = state_.load();
     }
 
     return true;
@@ -141,6 +143,14 @@ void ConnectionManager::disconnect() {
 
     std::lock_guard lock(stats_mutex_);
     stats_.state = ConnectionState::DISCONNECTED;
+}
+
+bool ConnectionManager::isConnected() const {
+    if (state_.load() != ConnectionState::CONNECTED) return false;
+    if (protocol_type_ == ProtocolType::TCP_SERVER) {
+        return client_socket_.load() != 0;
+    }
+    return true;
 }
 
 bool ConnectionManager::createSocket() {
@@ -219,9 +229,9 @@ void ConnectionManager::closeSocket() {
         platformCloseSocket(static_cast<socket_t>(socket_fd_));
         socket_fd_ = 0;
     }
-    if (client_socket_ != 0) {
-        platformCloseSocket(static_cast<socket_t>(client_socket_));
-        client_socket_ = 0;
+    uintptr_t client = client_socket_.exchange(0);
+    if (client != 0) {
+        platformCloseSocket(static_cast<socket_t>(client));
     }
 }
 
@@ -287,8 +297,10 @@ bool ConnectionManager::sendUDP(const uint8_t* data, size_t len) {
 }
 
 bool ConnectionManager::sendTCP(const uint8_t* data, size_t len) {
-    auto fd = (client_socket_ != 0) ? client_socket_ : socket_fd_;
+    uintptr_t client = client_socket_.load();
+    auto fd = (client != 0) ? client : socket_fd_;
     if (fd == 0) return false;
+    if (protocol_type_ == ProtocolType::TCP_SERVER && client == 0) return false;
 
     // Serialize concurrent senders so MAVLink frames are not interleaved.
     std::lock_guard lock(send_mutex_);
@@ -317,7 +329,7 @@ int ConnectionManager::receiveUDP(uint8_t* buffer, size_t max_len) {
 }
 
 int ConnectionManager::receiveTCP(uint8_t* buffer, size_t max_len) {
-    if (protocol_type_ == ProtocolType::TCP_SERVER && client_socket_ == 0) {
+    if (protocol_type_ == ProtocolType::TCP_SERVER && client_socket_.load() == 0) {
         int poll_result = platformPoll(static_cast<socket_t>(socket_fd_), 100);
         if (poll_result <= 0) return -1;
 
@@ -327,18 +339,33 @@ int ConnectionManager::receiveTCP(uint8_t* buffer, size_t max_len) {
                                reinterpret_cast<struct sockaddr*>(&client_addr), &addr_len);
         if (client == INVALID_SOCK) return -1;
         client_socket_ = static_cast<uintptr_t>(client);
+        state_ = ConnectionState::CONNECTED;
+        {
+            std::lock_guard lock(stats_mutex_);
+            stats_.state = ConnectionState::CONNECTED;
+        }
         LOG_INFO("ConnectionManager: TCP client connected");
     }
 
-    auto fd = (client_socket_ != 0) ? client_socket_ : socket_fd_;
+    uintptr_t client = client_socket_.load();
+    auto fd = (client != 0) ? client : socket_fd_;
+    if (protocol_type_ == ProtocolType::TCP_SERVER && client == 0) return -1;
+
     auto n = ::recv(static_cast<socket_t>(fd),
                     reinterpret_cast<char*>(buffer),
                     static_cast<int>(max_len), 0);
 
-    if (n <= 0 && client_socket_ != 0) {
+    if (n <= 0 && client != 0) {
         LOG_WARN("ConnectionManager: TCP client disconnected");
-        platformCloseSocket(static_cast<socket_t>(client_socket_));
-        client_socket_ = 0;
+        uintptr_t closed = client_socket_.exchange(0);
+        if (closed != 0) {
+            platformCloseSocket(static_cast<socket_t>(closed));
+        }
+        if (running_.load() && protocol_type_ == ProtocolType::TCP_SERVER) {
+            state_ = ConnectionState::CONNECTING;
+            std::lock_guard lock(stats_mutex_);
+            stats_.state = ConnectionState::CONNECTING;
+        }
     }
 
     return static_cast<int>(n);
@@ -355,8 +382,9 @@ void ConnectionManager::receiveLoop() {
 
     while (running_) {
         socket_t poll_fd;
-        if (protocol_type_ == ProtocolType::TCP_SERVER && client_socket_ != 0) {
-            poll_fd = static_cast<socket_t>(client_socket_);
+        uintptr_t client = client_socket_.load();
+        if (protocol_type_ == ProtocolType::TCP_SERVER && client != 0) {
+            poll_fd = static_cast<socket_t>(client);
         } else {
             poll_fd = static_cast<socket_t>(socket_fd_);
         }

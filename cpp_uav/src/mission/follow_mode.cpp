@@ -179,8 +179,9 @@ void FollowMode::tickApproach(const core::UAVState& own,
     double since_plan = time::elapsedS(last_plan_time_);
     if (since_plan >= config_.plan_update_interval_s || !nav_->hasActiveRoute()) {
         auto predicted = predictTarget(target);
-        nav_->planRoute(predicted, config_.approach_speed_ms);
-        last_plan_time_ = now;
+        if (nav_->planRoute(predicted, config_.approach_speed_ms)) {
+            last_plan_time_ = now;
+        }
     } else {
         nav_->update(own.position);
     }

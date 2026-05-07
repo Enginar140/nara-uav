@@ -52,7 +52,16 @@ bool MAVLinkBridge::start() {
 
     thread_pool_->submit([this] {
         std::this_thread::sleep_for(std::chrono::seconds(2));
-        param_reader_->requestCritical();
+        for (int i = 0; running_.load() && !pixhawk_->isConnected() && i < 30; ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        }
+        if (!running_.load() || !pixhawk_->isConnected()) {
+            LOG_WARN("MAVLinkBridge: pixhawk not connected, deferring parameter request");
+            return;
+        }
+        if (!params_requested_.exchange(true)) {
+            param_reader_->requestCritical();
+        }
         std::this_thread::sleep_for(std::chrono::seconds(5));
         if (!param_reader_->areCriticalReady()) {
             LOG_WARN("MAVLinkBridge: critical params not received after 5s, requesting all");
@@ -223,6 +232,10 @@ void MAVLinkBridge::handleHeartbeat(const MAVLinkMessage& msg) {
 
     event_bus_->publish(infra::EventType::HEARTBEAT_RECEIVED);
 
+    if (!params_requested_.exchange(true)) {
+        param_reader_->requestCritical();
+    }
+
     {
         std::lock_guard lock(stats_mutex_);
         stats_.last_heartbeat_us = time::nowUs();
@@ -254,8 +267,11 @@ void MAVLinkBridge::handleStatusText(const MAVLinkMessage& msg) {
             break;
 
         case StatusTextType::HSS:
+            world_model_->replaceHSSZones(parsed->hss_zones);
+            if (parsed->hss_zones.empty()) {
+                event_bus_->publish(infra::EventType::HSS_ZONE_UPDATED);
+            }
             for (const auto& zone : parsed->hss_zones) {
-                world_model_->updateHSSZone(zone);
                 event_bus_->publish(infra::EventType::HSS_ZONE_UPDATED, zone);
             }
             break;
@@ -358,7 +374,8 @@ void MAVLinkBridge::heartbeatLoop() {
         }
 
         // Auto-reconnect pixhawk if lost
-        if (!pixhawk_->isConnected()) {
+        if (!pixhawk_->isConnected() &&
+            pixhawk_->getState() != ConnectionState::CONNECTING) {
             LOG_WARN("MAVLinkBridge: pixhawk disconnected, reconnecting in {}ms",
                      reconnect_backoff_ms);
             std::this_thread::sleep_for(std::chrono::milliseconds(reconnect_backoff_ms));
@@ -369,6 +386,9 @@ void MAVLinkBridge::heartbeatLoop() {
                 reconnect_backoff_ms = 1000;
                 LOG_INFO("MAVLinkBridge: pixhawk reconnected");
                 event_bus_->publish(infra::EventType::MAVLINK_CONNECTED);
+                if (!params_requested_.exchange(true)) {
+                    param_reader_->requestCritical();
+                }
             } else {
                 reconnect_backoff_ms = std::min(reconnect_backoff_ms * 2, 30000);
             }
@@ -377,7 +397,8 @@ void MAVLinkBridge::heartbeatLoop() {
         }
 
         // Auto-reconnect GCS if lost
-        if (!gcs_->isConnected()) {
+        if (!gcs_->isConnected() &&
+            gcs_->getState() != ConnectionState::CONNECTING) {
             gcs_->reconnect();
             if (gcs_->isConnected()) {
                 gcs_->setMessageCallback([this](const MAVLinkMessage& m) {

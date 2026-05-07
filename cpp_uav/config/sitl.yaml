@@ -50,6 +50,7 @@ mission:
   follow:
     pursuit_range_m: 200.0
     reacquire_timeout_s: 5.0
+    max_reacquire_s: 30.0
     prediction_horizon_s: 3.0
     target_stale_s: 3.0
     plan_update_interval_s: 3.0

@@ -49,7 +49,7 @@ start "ArduPlane SITL #3" "%MINTTY%" -h always -t "ArduPlane SITL #3 (I=%INSTANC
 
 echo SITL #3 baslatildi.
 echo   - Python:         py tests\sitl_local_control_test.py tcp:127.0.0.1:%TCP_PRIMARY%
-echo   - MissionPlanner: Connect -> TCP -> 127.0.0.1 : %TCP_GCS%
+echo   - MissionPlanner: Connect -^> TCP -^> 127.0.0.1 : %TCP_GCS%
 echo   - UDP listener  : udpin:127.0.0.1:%UDP_OUT%
 echo.
 endlocal

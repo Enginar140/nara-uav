@@ -48,6 +48,7 @@ private:
     struct VNode {
         core::Position pos;
         int obstacle_id;  // -1 for start/goal
+        int vertex_id = -1;
     };
 
     using AdjList = std::vector<std::vector<std::pair<int, double>>>;

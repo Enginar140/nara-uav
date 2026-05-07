@@ -397,18 +397,18 @@ def scenario_10_qr_perception_lock(c: SitlClient) -> None:
 
     Mirrors what NavigationEngine.dispatchPerceptionTarget produces when
     SimpleQRDetector emits a fresh lock:
-      pulse 1 -> VISION_LOS-style BODY_OFFSET (yaw_off=+10deg, pitch=-5deg, range=80m)
+      pulse 1 -> VISION_LOS-style BODY_OFFSET (yaw_off=+10deg, pitch=+5deg, range=80m)
       pulse 2 -> world-pose LOCAL_NED  (north=+60, east=+20, down=-5)
     The aircraft should steer toward each in turn (no stale yaw bleed-over),
     proving that frame-aware dispatch correctly switches between body and
     local frames mid-flight (the key Phase 1f integration test).
     """
     yaw_off = 10.0
-    pitch_off = -5.0
+    pitch_off = 5.0
     rng = 80.0
     forward = math.cos(math.radians(yaw_off)) * math.cos(math.radians(pitch_off)) * rng
     right   = math.sin(math.radians(yaw_off)) * math.cos(math.radians(pitch_off)) * rng
-    down    = -math.sin(math.radians(pitch_off)) * rng
+    down    = math.sin(math.radians(pitch_off)) * rng
     print(f"  (perception pulse 1: VISION_LOS yaw=+{yaw_off:.0f} pitch={pitch_off:.0f} rng={rng:.0f}m"
           f"  -> body fwd={forward:+.1f} right={right:+.1f} down={down:+.1f})")
     c.send_local_ned_target(FRAME_BODY_OFFSET_NED, forward, right, down)
@@ -427,14 +427,14 @@ def scenario_11_qr_perception_world(c: SitlClient) -> None:
 def scenario_12_follow_vision_pulse(c: SitlClient) -> None:
     """FollowMode vision-fallback pulse: pretends world-model lost the
     target, vision sees it +20deg right of bore-sight, ~150m out, slightly
-    high. Equivalent to one pursueVisionTarget call from
+    low. Equivalent to one pursueVisionTarget call from
     NavigationEngine.dispatchPerceptionTarget."""
     yaw_off = 20.0
-    pitch_off = -3.0
+    pitch_off = 3.0
     rng = 150.0
     forward = math.cos(math.radians(yaw_off)) * math.cos(math.radians(pitch_off)) * rng
     right   = math.sin(math.radians(yaw_off)) * math.cos(math.radians(pitch_off)) * rng
-    down    = -math.sin(math.radians(pitch_off)) * rng
+    down    = math.sin(math.radians(pitch_off)) * rng
     print(f"  (follow vision pulse: yaw=+{yaw_off:.0f} pitch={pitch_off:.0f} rng={rng:.0f}m"
           f"  -> body fwd={forward:+.1f} right={right:+.1f} down={down:+.1f})")
     c.send_local_ned_target(FRAME_BODY_OFFSET_NED, forward, right, down)

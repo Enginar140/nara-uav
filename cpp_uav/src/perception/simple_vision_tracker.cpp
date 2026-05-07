@@ -77,9 +77,9 @@ std::optional<PerceptionTarget> SimpleVisionTracker::pollWorldModel(const core::
     double yaw_offset = geo::angleDifference(bearing_to, own_state.heading);
 
     double horiz_dist = geo::haversineDistance(own_state.position, target->position);
-    double dz = target->position.altitude - own_state.position.altitude;
-    double pitch_offset = std::atan2(dz, std::max(1.0, horiz_dist)) * geo::kRadToDeg;
-    double slant_range = std::sqrt(horiz_dist * horiz_dist + dz * dz);
+    double down = own_state.position.altitude - target->position.altitude;
+    double pitch_offset = std::atan2(down, std::max(1.0, horiz_dist)) * geo::kRadToDeg;
+    double slant_range = std::sqrt(horiz_dist * horiz_dist + down * down);
     if (slant_range < 1.0) slant_range = config_.default_range_m;
 
     PerceptionTarget t;

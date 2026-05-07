@@ -14,10 +14,7 @@ double haversineDistance(const core::Position& a, const core::Position& b) {
     double s = std::sin(dlat / 2);
     double c = std::sin(dlon / 2);
     double h = s * s + std::cos(lat1) * std::cos(lat2) * c * c;
-    double horizontal = 2.0 * kEarthRadius * std::asin(std::sqrt(h));
-
-    double dalt = b.altitude - a.altitude;
-    return std::sqrt(horizontal * horizontal + dalt * dalt);
+    return 2.0 * kEarthRadius * std::asin(std::sqrt(h));
 }
 
 double bearing(const core::Position& from, const core::Position& to) {

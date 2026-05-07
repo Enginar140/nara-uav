@@ -25,7 +25,11 @@ public:
     const Config& getConfig() const { return config_; }
 
     bool validatePosition(const core::Position& target) const;
+    bool validateSegment(const core::Position& from, const core::Position& target) const;
+    bool validateEscapeSegment(const core::Position& from, const core::Position& target) const;
     bool validateVelocity(float vn, float ve, float vd) const;
+    bool isInsideHSS(const core::Position& pos, bool include_buffer = false) const;
+    bool isPositionSafeNow(const core::Position& pos) const;
 
     core::Position clampToSafe(const core::Position& target) const;
     void clampVelocity(float& vn, float& ve, float& vd) const;

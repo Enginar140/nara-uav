@@ -86,6 +86,11 @@ bool WaypointChain::validate(const safety::ZoneChecker& checker,
                     chain_[i - 1].position, chain_[i].position, zones, hss_buffer)) {
                 return false;
             }
+            if (checker.segmentExitsBoundary(chain_[i - 1].position,
+                                             chain_[i].position,
+                                             boundary)) {
+                return false;
+            }
         }
     }
     return true;

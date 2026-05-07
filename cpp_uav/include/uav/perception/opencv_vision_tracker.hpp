@@ -24,7 +24,7 @@ namespace uav::perception {
 ///   fx = (image_width  / 2) / tan(h_fov/2)
 ///   fy = (image_height / 2) / tan(v_fov/2)
 ///   yaw_off_deg   =  atan2(cx_px - cx0, fx) * rad2deg     (right of center -> +)
-///   pitch_off_deg =  atan2(cy0 - cy_px, fy) * rad2deg     (above center  -> +)
+///   pitch_off_deg =  atan2(cy_px - cy0, fy) * rad2deg     (below center  -> +)
 ///
 /// Range estimate is configurable:
 ///   FIXED      -> always cfg_.fixed_range_m

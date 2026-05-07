@@ -95,6 +95,7 @@ void PerceptionEngine::start() {
     if (running_) return;
     running_ = true;
     last_lock_time_ = time::nowSteady();
+    last_miss_time_ = last_lock_time_;
     last_was_lock_ = false;
     thread_ = std::thread(&PerceptionEngine::tickLoop, this);
     LOG_INFO("PerceptionEngine: started @ {:.1f} Hz", config_.tick_rate_hz);
@@ -149,13 +150,18 @@ void PerceptionEngine::tickLoop() {
             ev.target = std::move(*result);
             if (ev.target.stamp_us == 0) ev.target.stamp_us = time::nowUs();
             last_lock_time_ = time::nowSteady();
+            last_miss_time_ = last_lock_time_;
             last_was_lock_ = true;
             bus_->publish(infra::EventType::PERCEPTION_UPDATED, ev);
         } else {
-            double since_lock_ms = time::durationS(last_lock_time_, time::nowSteady()) * 1000.0;
+            auto now = time::nowSteady();
+            double since_lock_ms = time::durationS(last_lock_time_, now) * 1000.0;
+            double since_miss_ms = time::durationS(last_miss_time_, now) * 1000.0;
             bool stale = since_lock_ms >= config_.lock_timeout_ms;
-            if (stale && (config_.publish_misses || last_was_lock_)) {
+            bool miss_due = last_was_lock_ || since_miss_ms >= config_.lock_timeout_ms;
+            if (stale && miss_due && (config_.publish_misses || last_was_lock_)) {
                 publishMiss();
+                last_miss_time_ = now;
                 last_was_lock_ = false;
             }
         }
