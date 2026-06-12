@@ -1,0 +1,193 @@
+system:
+  thread_pool_size: 4
+  opponent_stale_timeout_s: 10.0
+
+mavlink:
+  pixhawk:
+    connection: "udpin:127.0.0.1:14550"
+    heartbeat_timeout: 5.0
+  gcs:
+    connection: "tcpin:127.0.0.1:14552"
+
+safety:
+  monitoring_rate_hz: 20.0
+  hss_buffer_m: 40.0
+  boundary_buffer_m: 20.0
+  # SITL: keep the same envelope as default.yaml so behaviour is comparable.
+  min_altitude_m: 30.0
+  max_altitude_m: 400.0
+  max_velocity_ms: 40.0
+  collision_critical_m: 30.0
+  collision_high_m: 80.0
+  collision_medium_m: 200.0
+  collision_low_m: 500.0
+  ttc_critical_s: 5.0
+  ttc_high_s: 10.0
+  boundary_warn_m: 30.0
+
+nav:
+  planner:
+    hss_buffer_m: 40.0
+    boundary_buffer_m: 20.0
+    min_turn_radius_m: 50.0
+    turn_safety_margin_m: 50.0
+    escape_prevention_margin_m: 80.0
+    max_arc_step_deg: 10.0
+    max_segment_length_m: 80.0
+    dubins_smoothing_enabled: true
+    polygon_segments: 12
+  waypoint:
+    acceptance_radius_m: 80.0
+    lookahead_factor: 0.3
+  speed:
+    cruise: 20.0
+    max: 35.0
+    min: 12.0
+    patrol: 18.0
+    pursuit: 30.0
+    dive: 25.0
+  command:
+    min_interval_ms: 250
+    min_plan_interval_ms: 2000
+
+flight:
+  cruise_altitude_m: 100.0
+
+mission:
+  follow:
+    pursuit_range_m: 200.0
+    reacquire_timeout_s: 5.0
+    max_reacquire_s: 30.0
+    prediction_horizon_s: 3.0
+    target_stale_s: 3.0
+    plan_update_interval_s: 3.0
+    route_lock_s: 8.0
+    route_goal_update_m: 120.0
+    route_force_replan_m: 350.0
+    commit_route_until_complete: true
+    route_prediction_min_s: 3.0
+    route_prediction_max_s: 10.0
+    approach_standoff_m: 150.0
+    route_chain_min_spacing_m: 120.0
+    target_position_alpha: 0.30
+    target_velocity_alpha: 0.35
+    target_filter_reset_m: 500.0
+    direct_command_interval_s: 1.5
+    direct_goal_update_m: 70.0
+    # SITL: vision fallback ON so kamera-tabanli senaryolar test edilebilir.
+    # vision_module = "vision_tracker_opencv" -> gercek webcam (HoughCircles).
+    # vision_module = "vision_tracker"        -> sentetik / world-model fallback.
+    vision_fallback: true
+    vision_module: "vision_tracker_opencv"
+    vision_lock_age_s: 0.5
+  qr_dive:
+    approach_altitude_m: 120.0
+    min_altitude_m: 20.0
+    climb_altitude_m: 100.0
+    entry_corridor_m: 500.0
+    align_heading_tolerance_deg: 15.0
+    align_altitude_tolerance_m: 10.0
+    dive_pitch_deg: -45.0
+    dive_speed_ms: 25.0
+    target_pass_distance_m: 15.0
+    climb_timeout_s: 30.0
+    use_perception_terminal: true
+    perception_lock_age_s: 0.5
+    perception_module: "qr_simple"
+    on_complete: "rtl"
+  patrol:
+    boundary_inset_m: 50.0
+    cruise_altitude_m: 100.0
+
+perception:
+  tick_rate_hz: 10.0
+  min_confidence: 0.4
+  lock_timeout_ms: 1000.0
+  publish_misses: true
+  vision:
+    detection_timeout_s: 1.0
+    default_range_m: 100.0
+    min_confidence: 0.5
+    target_id: -1
+    use_world_fallback: true
+  qr:
+    detection_timeout_s: 0.7
+    default_range_m: 60.0
+    min_confidence: 0.6
+    expected_payload: ""
+
+  # Real-camera vision tracker (OpenCV). When enabled and OpenCV is linked,
+  # registers a module with id=opencv_vision.id (default vision_tracker_opencv).
+  # Switch a mission to use it via mission.follow.vision_module:
+  #     mission.follow.vision_module: "vision_tracker_opencv"
+  opencv_vision:
+    enabled: true
+    id: "vision_tracker_opencv"
+    # DEBUG: kamerayi mission moduna gecmeden hemen ac (kamera + preview saniyede acilir).
+    # Calistigini gordukten sonra false yapip mission tarafindan tetiklenmesini izle.
+    auto_start: true
+
+    camera:
+      type: "device"          # device | rtsp | http | file | auto
+      device_index: 1          # built-in laptop webcam = 0
+      url: ""                  # rtsp://user:pass@ip:554/stream  or  http://ip:port/video
+      file_path: ""            # ./samples/clip.mp4 vb.
+      width: 640
+      height: 480
+      fps: 30.0
+      loop_file: true
+
+    h_fov_deg: 60.0           # laptop webcam ortalama; gercek lensine gore ayarla
+    v_fov_deg: 45.0
+    detection_timeout_s: 1.0
+    min_confidence: 0.55
+    worker_sleep_ms: 5
+
+    detector:
+      dp: 1.2
+      min_dist_factor: 0.25
+      param1: 100.0
+      param2: 30.0
+      min_radius_px: 15
+      max_radius_px: 200
+      gaussian_kernel: 9
+      use_hsv_mask: false      # true yaparsan asagidaki HSV bandina gore filtreler (renkli top icin)
+      hsv_lo_h1: 0
+      hsv_hi_h1: 10
+      hsv_lo_h2: 170
+      hsv_hi_h2: 179
+      hsv_lo_s: 100
+      hsv_hi_s: 255
+      hsv_lo_v: 80
+      hsv_hi_v: 255
+      base_confidence: 0.7
+
+    range:
+      mode: "fixed"           # fixed | size | altitude
+      fixed_m: 50.0
+      real_diameter_m: 0.30   # SIZE icin: hedefin gercek capi (m)
+      min_m: 1.0
+      max_m: 1000.0
+
+    preview:
+      enabled: true            # cv::imshow ile canli onizleme + tespit halkasi
+      title: "uav vision (round) - SITL"
+
+# SITL test boundary (San Francisco - SITL default home bolgesi, v9.1 ile ayni)
+boundary:
+  vertices:
+    - { lat: 37.8488325, lon: -122.3942184 }
+    - { lat: 37.7973058, lon: -122.3808289 }
+    - { lat: 37.8200904, lon: -122.3125076 }
+    - { lat: 37.8626572, lon: -122.3303604 }
+
+# SITL test HSS zones (San Francisco alan icinde)
+hss_zones:
+  - { id: 1, lat: 37.8300, lon: -122.3600, alt: 0, radius: 200.0, active: true }
+  - { id: 2, lat: 37.8150, lon: -122.3400, alt: 0, radius: 150.0, active: true }
+
+logging:
+  level: "debug"
+  dir: "logs"
+  max_size_mb: 50
+  backup_count: 10

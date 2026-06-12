@@ -1,0 +1,249 @@
+system:
+  thread_pool_size: 4
+  opponent_stale_timeout_s: 10.0
+
+mavlink:
+  pixhawk:
+    connection: "udpin:127.0.0.1:14550"
+    heartbeat_timeout: 5.0
+  gcs:
+    connection: "tcpin:127.0.0.1:14552"
+
+safety:
+  monitoring_rate_hz: 20.0
+  hss_buffer_m: 40.0
+  boundary_buffer_m: 20.0
+  min_altitude_m: 30.0
+  max_altitude_m: 400.0
+  max_velocity_ms: 40.0
+  collision_critical_m: 30.0
+  collision_high_m: 80.0
+  collision_medium_m: 200.0
+  collision_low_m: 500.0
+  ttc_critical_s: 5.0
+  ttc_high_s: 10.0
+  boundary_warn_m: 30.0
+
+nav:
+  planner:
+    hss_buffer_m: 40.0
+    boundary_buffer_m: 20.0
+    min_turn_radius_m: 50.0
+    turn_safety_margin_m: 50.0
+    escape_prevention_margin_m: 80.0
+    max_arc_step_deg: 10.0
+    max_segment_length_m: 80.0
+    dubins_smoothing_enabled: true
+    polygon_segments: 12
+  waypoint:
+    acceptance_radius_m: 80.0
+    lookahead_factor: 0.3
+  speed:
+    cruise: 20.0
+    max: 35.0
+    min: 12.0
+    patrol: 18.0
+    pursuit: 30.0
+    dive: 25.0
+  command:
+    min_interval_ms: 250
+    min_plan_interval_ms: 2000
+
+flight:
+  cruise_altitude_m: 100.0
+
+mission:
+  follow:
+    pursuit_range_m: 200.0
+    reacquire_timeout_s: 5.0
+    max_reacquire_s: 30.0
+    prediction_horizon_s: 3.0
+    target_stale_s: 3.0
+    plan_update_interval_s: 3.0
+    route_lock_s: 8.0
+    route_goal_update_m: 120.0
+    route_force_replan_m: 350.0
+    commit_route_until_complete: true
+    route_prediction_min_s: 3.0
+    route_prediction_max_s: 10.0
+    approach_standoff_m: 150.0
+    route_chain_min_spacing_m: 120.0
+    target_position_alpha: 0.30
+    target_velocity_alpha: 0.35
+    target_filter_reset_m: 500.0
+    direct_command_interval_s: 1.5
+    direct_goal_update_m: 70.0
+    approach_speed_ms: 20.0
+    pursuit_speed_ms: 30.0
+    pn_gain: 3.0
+    pn_max_lead_deg: 45.0
+    # Vision-perception fallback when world-model loses the target. When
+    # false (default), FOLLOW behaves as before and goes straight to
+    # REACQUIRE when the world-model target goes stale.
+    vision_fallback: false
+    vision_module: "vision_tracker"
+    vision_lock_age_s: 0.5
+  qr_dive:
+    approach_altitude_m: 120.0
+    min_altitude_m: 20.0
+    climb_altitude_m: 100.0
+    entry_corridor_m: 500.0
+    align_heading_tolerance_deg: 15.0
+    align_altitude_tolerance_m: 10.0
+    dive_pitch_deg: -45.0
+    dive_speed_ms: 25.0
+    target_pass_distance_m: 15.0
+    climb_timeout_s: 30.0
+    use_position_dive: true
+    dive_step_interval_s: 0.5
+    # Terminal-phase guidance: prefer perception lock (frame-aware dispatch)
+    # over the blind position/bearing step. Falls back automatically when
+    # no fresh detection is available.
+    use_perception_terminal: true
+    perception_lock_age_s: 0.5
+    perception_module: "qr_simple"
+    # Behaviour after the dive sequence finishes: rtl | patrol | loiter.
+    # rtl is the safest default - hands control back to ArduPilot RTL.
+    on_complete: "rtl"
+  patrol:
+    boundary_inset_m: 50.0
+    cruise_altitude_m: 100.0
+
+perception:
+  tick_rate_hz: 10.0
+  min_confidence: 0.4
+  lock_timeout_ms: 1000.0
+  publish_misses: true
+  vision:
+    detection_timeout_s: 1.0
+    default_range_m: 100.0
+    min_confidence: 0.5
+    target_id: -1            # -1 = nearest opponent in WorldModel
+    use_world_fallback: true
+  qr:
+    detection_timeout_s: 0.7
+    default_range_m: 60.0
+    min_confidence: 0.6
+    expected_payload: ""     # empty = accept any QR payload
+
+  # Real-camera vision tracker (OpenCV). Default OFF in production config -
+  # turn on when a physical camera is wired and OpenCV is linked into the
+  # build. To activate per-mission set:
+  #     mission.follow.vision_module: "vision_tracker_opencv"
+  #     mission.qr_dive.perception_module: "vision_tracker_opencv"  (rare)
+  opencv_vision:
+    enabled: false
+    id: "vision_tracker_opencv"
+    auto_start: false   # debug only; mission mode tetiklemesini bekler
+    camera:
+      type: "device"
+      device_index: 0
+      url: ""
+      file_path: ""
+      width: 640
+      height: 480
+      fps: 30.0
+      loop_file: true
+    h_fov_deg: 60.0
+    v_fov_deg: 45.0
+    detection_timeout_s: 1.0
+    min_confidence: 0.55
+    worker_sleep_ms: 5
+    detector:
+      dp: 1.2
+      min_dist_factor: 0.25
+      param1: 100.0
+      param2: 30.0
+      min_radius_px: 15
+      max_radius_px: 200
+      gaussian_kernel: 9
+      use_hsv_mask: false
+      hsv_lo_h1: 0
+      hsv_hi_h1: 10
+      hsv_lo_h2: 170
+      hsv_hi_h2: 179
+      hsv_lo_s: 100
+      hsv_hi_s: 255
+      hsv_lo_v: 80
+      hsv_hi_v: 255
+      base_confidence: 0.7
+    range:
+      mode: "fixed"
+      fixed_m: 50.0
+      real_diameter_m: 0.30
+      min_m: 1.0
+      max_m: 1000.0
+    preview:
+      enabled: false
+      title: "uav vision (round)"
+
+  # Savasan IHA kilitlenme/QR modulu: YOLO dedektor + ROI takip + Kalman tahmin
+  # + merkeze-getirme PID + sartname kilit durum makinesi + video kaydi.
+  # Default OFF; kamera + ultralytics/opencv hazir oldugunda ac. Aktif edince
+  # mission.follow.vision_module: "combat_vision" yapip yonlendir.
+  combat:
+    enabled: false
+    id: "combat_vision"
+    mode: "lock"            # lock (hava hedefi) | qr (kamikaze yer hedefi)
+    av_w_frac: 0.40         # AV (hedef vurus alani) genislik orani (Sekil 2'ye gore ayarla)
+    av_h_frac: 0.40
+    lock_min_frac: 0.06     # eksen oran esigi (sartname %5 + tolerans)
+    detect_every_n: 6       # her N frame'de YOLO; arada ROI (FPS)
+    record_video: false
+    camera:
+      type: "device"        # device | file | rtsp | http
+      device_index: 0
+      url: ""
+      file_path: ""
+      width: 640
+      height: 480
+      fps: 30.0
+      loop_file: true
+    yolo:
+      model_path: "yolov8n.pt"   # egitilmis ucak modeli onerilir
+      conf: 0.35
+      iou: 0.5
+      imgsz: 640
+      device: ""                 # "" oto | "cpu" | "0"
+      half: false
+      class_ids: []              # bos = tum siniflar; COCO aeroplane=4
+    centering:                    # merkeze-getirme PID -> govde hiz demand
+      yaw_kp: 1.2
+      yaw_ki: 0.05
+      yaw_kd: 0.20
+      pitch_kp: 0.8
+      pitch_ki: 0.03
+      pitch_kd: 0.15
+      cruise_speed_ms: 20.0
+      max_lateral_ms: 14.0
+      max_vertical_ms: 4.0
+    lock:
+      min_lock_s: 4.0            # sartname kesintisiz kilit suresi
+      max_gap_s: 0.5            # tek seferde tolere edilen kayip
+      invalid_tolerance_s: 0.8  # pencere boyunca toplam kayip butcesi
+      require_autonomous: true
+      prevent_same_target_twice: true
+      require_airborne: true
+    video:
+      path: "lock_record.mp4"
+      fps: 15.0                  # sabit (sartname min 15)
+      fourcc: "mp4v"            # yarisma icin "avc1" (H264) tercih edilir
+
+# Yarışma alanı sınırları
+# SITL test: v9.1 San Francisco boundary
+# Gercek yarismada: STATUSTEXT BND mesajlari ile guncellenir
+boundary:
+  vertices:
+    - { lat: 37.8488325, lon: -122.3942184 }
+    - { lat: 37.7973058, lon: -122.3808289 }
+    - { lat: 37.8200904, lon: -122.3125076 }
+    - { lat: 37.8626572, lon: -122.3303604 }
+
+# HSS bolgeleri (bos = STATUSTEXT ile gelecek)
+hss_zones: []
+
+logging:
+  level: "info"
+  dir: "logs"
+  max_size_mb: 10
+  backup_count: 5
