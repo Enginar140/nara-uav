@@ -140,7 +140,17 @@ class QRDiveMode(IMissionMode):
             return
         self._calculate_entry_point()
         if self._entry_valid:
-            self._nav.plan_route(self._entry_point)
+            self._plan_to_entry()
+
+    def _plan_to_entry(self) -> bool:
+        """Entry point'e DALIS EKSENI heading'iyle varan rota planla.
+
+        Varis yonu = entry -> hedef; planner (hybrid A*/Dubins) varis
+        heading'ini garanti eder, boylece ALIGN fazi kisalir.
+        """
+        dive_axis = geo.bearing(self._entry_point, self._dive_target)
+        return self._nav.plan_route(self._entry_point,
+                                    goal_heading_deg=dive_axis)
 
     def on_exit(self) -> None:
         self._disable_perception()
@@ -179,7 +189,7 @@ class QRDiveMode(IMissionMode):
                 _log.info("QR_DIVE: entry point'e varildi -> ALIGN")
                 self._enter_phase(DivePhase.ALIGN)
             else:
-                self._nav.plan_route(self._entry_point)
+                self._plan_to_entry()
 
     def _tick_align(self, own: UAVState) -> None:
         heading_to_target = geo.bearing(own.position, self._dive_target)

@@ -30,15 +30,26 @@ nav:
     hss_buffer_m: 40.0
     boundary_buffer_m: 20.0
     min_turn_radius_m: 50.0
+    max_bank_deg: 35.0              # hiza bagli donus yaricapi: v^2/(g*tan)
     turn_safety_margin_m: 50.0
     escape_prevention_margin_m: 80.0
-    max_arc_step_deg: 10.0
+    tracking_error_m: 15.0          # planlayici sert duvarina L1 sapma payi
+    direct_clear_margin_m: 25.0     # pursuit/look-ahead direkt kontrol marji
+    max_arc_step_deg: 25.0          # arc ornekleme (waypoint araligi ~R*aci)
     max_segment_length_m: 80.0
-    dubins_smoothing_enabled: true
+    dubins_smoothing_enabled: true  # kademe 2 (hybrid A*) ac/kapa
     polygon_segments: 12
+    soft_cost_max: 4.0              # konfor bandi ic kenari maliyet carpani
+    boundary_soft_band_m: 60.0
+    boundary_cost_max: 1.5
+    side_bias_cost: 1.0             # homotopi yan-degisim cezasi
+    cell_size_m: 15.0
+    heading_bins: 16
+    max_expansions: 30000
+    time_budget_ms: 600.0
   waypoint:
-    acceptance_radius_m: 80.0
-    lookahead_factor: 0.3
+    acceptance_radius_m: 50.0       # along-track gecis tespiti ile kucultuldu
+    lookahead_factor: 1.0
   speed:
     cruise: 20.0
     max: 35.0
@@ -82,7 +93,8 @@ mission:
     vision_lock_age_s: 0.5
   qr_dive:
     approach_altitude_m: 120.0
-    min_altitude_m: 20.0
+    # Uygulama bunu guvenlik tabani + pull-out kaybiyla asagidan sinirlar.
+    min_altitude_m: 35.0
     climb_altitude_m: 100.0
     entry_corridor_m: 500.0
     align_heading_tolerance_deg: 15.0

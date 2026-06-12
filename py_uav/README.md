@@ -32,23 +32,33 @@ core → config → infra → world_model → comm → safety → nav → missio
 | world_model | world_model | Thread-güvenli dünya durumu (own/opponents/HSS/boundary) |
 | comm | mavlink_io, flight_commander, statustext_parser, mavlink_bridge | pymavlink; GUIDED komut yüzeyi; RIV/HSS/BND/MODE parse |
 | safety | zone_checker, safety_gate, safety_monitor, escape_manager | Komut clamp, 20Hz watchdog, kaçış |
-| nav | planner, waypoint_chain, speed_manager, navigation_engine | **shapely visibility-graph + turn-radius koridor**; GUIDED sequencing |
+| nav | planner, dubins, cost_field, hybrid_astar, waypoint_chain, speed_manager, navigation_engine | **3 kademeli planlayıcı (konfor grafı → hybrid A\*/Dubins → indirgenmiş graf)**; GUIDED sequencing |
 | mission | patrol, follow (PN), qr_dive, mission_director | Görev modları + durum makinesi |
 | app | application, main | asyncio orchestration |
 
-## Yol planlama
+## Yol planlama (3 kademe)
 
-`nav/planner.py` — shapely + networkx + pyproj:
+`nav/planner.py` + `dubins.py` + `cost_field.py` + `hybrid_astar.py`
+(shapely + networkx + pyproj; tüm geometri `LocalFrame` AEQD metre-düzleminde):
 
-- Tüm geometri tek bir `LocalFrame` (pyproj AEQD) metre-düzleminde.
-- **İki katman marj:** HARD = HSS yarıçapı + `hss_buffer_m` (asla ihlal edilmez);
-  SOFT = HARD + `turn_safety_margin_m` (detour'lar buradan geçer, böylece uçak
-  WP'leri keserken HARD koridora girmez).
-- Düz segment soft-clear ise direkt; değilse HSS dairelerini soft poligona genişlet
-  → visibility graph → Dijkstra → line-of-sight simplify → densify → HARD doğrulama.
-- `make_safe(waypoint_list)`: GCS'ten gelen waypoint listesini bacak bacak güvenli
-  hâle getirir ("sürekli waypoint listesi" senaryosu).
-- Arc/Dubins **waypoint üretmez** — ArduPlane kendi yumuşatmasını yapar.
+- **İki güvenlik kavramı:** HARD = HSS yarıçapı + `hss_buffer_m` (SafetyGate ile
+  aynı metrik, asla ihlal edilmez); KONFOR = HARD + dönüş + escape marjı.
+- **Kademe 0/1 (açık alan):** direkt konfor-temiz ya da konforlu visibility
+  graph — bugüne kadarki geniş-klerans davranışı aynen.
+- **Kademe 2 (hybrid A\*/Dubins):** konfor marjı rota seçeneklerini mühürlerse
+  (dar HSS koridoru) ya da **varış heading'i** istenirse devreye girer. Sert
+  duvar yalnız HARD + izleme payı; konfor bandı **maliyettir** — koridor tek
+  seçenekse koridordan geçilir. Arama (x, y, heading) uzayında, hıza bağlı
+  dönüş yarıçapıyla (`v²/(g·tanφ)`) — çıkan yol uçulabilirdir. Hedefe analitik
+  **Dubins shot** varış heading'ini garanti eder (QR dalış girişi).
+- **Kademe 3 (son çare):** indirgenmiş marjlı graf — hybrid bütçeyi aşarsa
+  "yol yok" yerine heading-kör ama HARD-güvenli rota.
+- **Homotopi imzası:** plan hangi HSS'i hangi yandan geçtiğini taşır; replan
+  önceki yanı tercih eder (yan flip-flop önlenir).
+- `make_safe(waypoint_list)`: bacak bacak güvenli hâle getirir; bacaklar arası
+  heading sürekliliği korunur.
+- Çıktı her zaman düz waypoint listesidir (arc'lar `max_arc_step_deg` ile
+  örneklenir) — ArduPlane yine yalnız `DO_REPOSITION` hedefleri uçar.
 
 ## Kurulum
 
@@ -79,7 +89,7 @@ GCS'ten STATUSTEXT ile komut: `BND:...`, `HSS:...`, `FREE` (PATROL),
 ## Test
 
 ```bash
-cd py_uav && python -m pytest -q          # 64 test
+cd py_uav && python -m pytest -q          # 126 test
 ```
 
 ## STATUSTEXT formatları (GCS → companion)

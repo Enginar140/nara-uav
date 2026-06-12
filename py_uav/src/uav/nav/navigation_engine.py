@@ -59,11 +59,15 @@ class NavigationEngine:
         self._last_replan_attempt_t = 0.0
         self._last_sent: Optional[Position] = None
         self._escape_active = False
+        # Aktif rotanin homotopi imzasi: replan ayni yani tercih eder
+        # (HSS etrafinda yan flip-flop'unu planner seviyesinde keser).
+        self._last_signature: tuple = ()
 
     # ===================== Rota planlama =====================
-    def plan_route(self, goal: Position, airspeed: float = -1.0) -> bool:
+    def plan_route(self, goal: Position, airspeed: float = -1.0,
+                   goal_heading_deg: Optional[float] = None) -> bool:
         with self._lock:
-            return self._plan_to(goal, airspeed)
+            return self._plan_to(goal, airspeed, goal_heading_deg)
 
     def make_safe_route(self, waypoints: List[Position], airspeed: float = -1.0) -> bool:
         """Verilen waypoint listesini HSS-guvenli zincire cevir ve yukle."""
@@ -76,7 +80,10 @@ class NavigationEngine:
             boundary = self._wm.get_boundary()
             zones = self._wm.get_active_hss_zones()
             full = [own.position] + list(waypoints)
-            result = self._planner.make_safe(full, boundary, zones)
+            speed = airspeed if airspeed > 0 else self._speed.cruise_speed()
+            result = self._planner.make_safe(full, boundary, zones,
+                                             start_heading_deg=own.heading,
+                                             speed_ms=speed)
             if not result.success:
                 _log.warning("make_safe_route basarisiz: %s", result.error)
                 return False
@@ -85,7 +92,8 @@ class NavigationEngine:
                       result.total_distance_m)
             return self._send_current(force=True)
 
-    def _plan_to(self, goal: Position, airspeed: float) -> bool:
+    def _plan_to(self, goal: Position, airspeed: float,
+                 goal_heading_deg: Optional[float] = None) -> bool:
         # Periyodik/normal planlama: yakinda planladiysak ve aktif rota varsa atla.
         if self._should_block_normal():
             return False
@@ -93,9 +101,10 @@ class NavigationEngine:
         if (now - self._last_plan_t < self._min_plan
                 and not self._chain.is_empty() and not self._chain.is_complete()):
             return True
-        return self._do_plan(goal, airspeed)
+        return self._do_plan(goal, airspeed, goal_heading_deg)
 
-    def _do_plan(self, goal: Position, airspeed: float) -> bool:
+    def _do_plan(self, goal: Position, airspeed: float,
+                 goal_heading_deg: Optional[float] = None) -> bool:
         """Cekirdek planlama (plan-before-swap): plan BASARISIZ olursa mevcut
         zincire DOKUNMAZ. Yeni zincir yalniz basarida yuklenir.
         """
@@ -112,13 +121,19 @@ class NavigationEngine:
             return False
         zones = self._wm.get_active_hss_zones()
         goal_safe = goal if self._gate.validate_position(goal) else self._gate.clamp_to_safe(goal)
-        result = self._planner.plan(own.position, goal_safe, boundary, zones)
+        speed = airspeed if airspeed > 0 else self._speed.cruise_speed()
+        result = self._planner.plan(own.position, goal_safe, boundary, zones,
+                                    start_heading_deg=own.heading,
+                                    goal_heading_deg=goal_heading_deg,
+                                    speed_ms=speed,
+                                    prefer_signature=self._last_signature)
         if not result.success:
             _log.warning("Planlama basarisiz, mevcut rota korunuyor: %s", result.error)
             return False
         self._load_chain(result.waypoints, airspeed)
-        _log.info("Rota planlandi: %d waypoint, %.0fm", self._chain.size(),
-                  result.total_distance_m)
+        self._last_signature = result.signature
+        _log.info("Rota planlandi [%s]: %d waypoint, %.0fm", result.stage,
+                  self._chain.size(), result.total_distance_m)
         if self._send_current(force=True):
             self._last_plan_t = now_monotonic()
             return True
@@ -225,12 +240,14 @@ class NavigationEngine:
                 _log.warning("Direkt segment guvensiz, HSS etrafinda yeniden planlaniyor")
                 return self._do_plan(safe, speed)
             return False
-        # tek-bacak koridor turn-clearance kontrolu
+        # tek-bacak klerans kontrolu: hard + direct_margin (konfor DEGIL --
+        # koridor icinde takip/pursuit'i engellemez, SafetyGate ayrica korur)
         if not escape:
             boundary = self._wm.get_boundary()
             zones = self._wm.get_active_hss_zones()
             if boundary is not None and not self._planner.is_direct_clear(
-                    own.position, safe, boundary, zones):
+                    own.position, safe, boundary, zones,
+                    margin_m=self._planner.direct_margin()):
                 return self._do_plan(safe, speed)
         return self._send_target(safe, speed, force=True)
 
@@ -392,6 +409,7 @@ class NavigationEngine:
         with self._lock:
             self._chain.clear()
             self._last_sent = None
+            self._last_signature = ()
 
     def has_active_route(self) -> bool:
         with self._lock:
@@ -414,7 +432,9 @@ class NavigationEngine:
             zones = self._wm.get_active_hss_zones()
             if boundary is None or not boundary.is_valid():
                 return True
-            return self._planner.is_direct_clear(own.position, safe, boundary, zones)
+            return self._planner.is_direct_clear(
+                own.position, safe, boundary, zones,
+                margin_m=self._planner.direct_margin())
 
     def revalidate_route(self) -> bool:
         """Mevcut rotanin HARD-guvenligini dogrula; bozuksa plan-before-swap.
@@ -500,11 +520,15 @@ class NavigationEngine:
         return self._gate.checker.is_inside_any_hss(pos, zones, self._gate.cfg.hss_buffer_m)
 
     def _is_direct_soft_clear(self, frm: Position, target: Position) -> bool:
+        # look-ahead erken gecis: hard + direct_margin yeterli (konfor marji
+        # koridorda erken gecisi tamamen kilitler)
         boundary = self._wm.get_boundary()
         if boundary is None or not boundary.is_valid():
             return True
         zones = self._wm.get_active_hss_zones()
-        return self._planner.is_direct_clear(frm, target, boundary, zones)
+        return self._planner.is_direct_clear(
+            frm, target, boundary, zones,
+            margin_m=self._planner.direct_margin())
 
     def _body_offset_to_position(self, own: UAVState, fwd: float, right: float,
                                  down: float) -> Position:

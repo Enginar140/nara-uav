@@ -6,6 +6,7 @@ Olay abonelikleri (failsafe/replan/mode), ~5Hz mission tick + dashboard.
 from __future__ import annotations
 
 import asyncio
+import math
 from typing import List, Optional
 
 from ..comm.mavlink_bridge import MavlinkBridge
@@ -125,10 +126,23 @@ class Application:
             hss_buffer_m=c.get_float("nav.planner.hss_buffer_m", 40.0),
             boundary_buffer_m=c.get_float("nav.planner.boundary_buffer_m", 20.0),
             min_turn_radius_m=c.get_float("nav.planner.min_turn_radius_m", 50.0),
+            max_bank_deg=c.get_float("nav.planner.max_bank_deg", 35.0),
             turn_safety_margin_m=c.get_float("nav.planner.turn_safety_margin_m", 50.0),
             escape_prevention_margin_m=c.get_float("nav.planner.escape_prevention_margin_m", 80.0),
+            tracking_error_m=c.get_float("nav.planner.tracking_error_m", 15.0),
+            direct_clear_margin_m=c.get_float("nav.planner.direct_clear_margin_m", 25.0),
             max_segment_length_m=c.get_float("nav.planner.max_segment_length_m", 80.0),
+            max_arc_step_deg=c.get_float("nav.planner.max_arc_step_deg", 25.0),
             polygon_segments=c.get_int("nav.planner.polygon_segments", 16),
+            dubins_smoothing_enabled=c.get_bool("nav.planner.dubins_smoothing_enabled", True),
+            soft_cost_max=c.get_float("nav.planner.soft_cost_max", 4.0),
+            boundary_soft_band_m=c.get_float("nav.planner.boundary_soft_band_m", 60.0),
+            boundary_cost_max=c.get_float("nav.planner.boundary_cost_max", 1.5),
+            side_bias_cost=c.get_float("nav.planner.side_bias_cost", 1.0),
+            cell_size_m=c.get_float("nav.planner.cell_size_m", 15.0),
+            heading_bins=c.get_int("nav.planner.heading_bins", 16),
+            max_expansions=c.get_int("nav.planner.max_expansions", 30000),
+            time_budget_ms=c.get_float("nav.planner.time_budget_ms", 600.0),
         ))
         self.speed = SpeedManager(SpeedConfig(
             cruise=c.get_float("nav.speed.cruise", 20.0),
@@ -278,7 +292,7 @@ class Application:
             ),
             qr_dive=QRDiveConfig(
                 approach_altitude_m=c.get_float("mission.qr_dive.approach_altitude_m", 120.0),
-                min_altitude_m=c.get_float("mission.qr_dive.min_altitude_m", 20.0),
+                min_altitude_m=self._qr_dive_floor(),
                 climb_altitude_m=c.get_float("mission.qr_dive.climb_altitude_m", 100.0),
                 entry_corridor_m=c.get_float("mission.qr_dive.entry_corridor_m", 500.0),
                 align_heading_tolerance_deg=c.get_float("mission.qr_dive.align_heading_tolerance_deg", 15.0),
@@ -298,6 +312,25 @@ class Application:
         self.mission = MissionDirector(self.nav, self.commander, self.wm, self.bus, mc,
                                        perception=self.perception)
         self.mission.initialize()
+
+    def _qr_dive_floor(self) -> float:
+        """Dalis komut tabani: guvenlik tabani + pull-out irtifa kaybi.
+
+        Sartname geregi kamikaze dalisinda da min irtifa siniri gecerli
+        (ihlal = alan disi cezasi). Toparlanmada kaybedilen irtifa
+        v_dusey^2 / (2*a_pull) ile kestirilir (a_pull ~ 0.5g).
+        """
+        c = self.config
+        cfg_floor = c.get_float("mission.qr_dive.min_altitude_m", 20.0)
+        safety_floor = c.get_float("safety.min_altitude_m", 30.0)
+        speed = c.get_float("mission.qr_dive.dive_speed_ms", 25.0)
+        pitch = abs(c.get_float("mission.qr_dive.dive_pitch_deg", -45.0))
+        v_down = speed * math.sin(math.radians(pitch))
+        pullout_sag = v_down * v_down / (2.0 * 0.5 * 9.80665)
+        floor = max(cfg_floor, safety_floor + pullout_sag)
+        _log.info("QR dalis tabani: %.0fm (guvenlik %.0f + pull-out %.0f)",
+                  floor, safety_floor, pullout_sag)
+        return floor
 
     def _load_boundary_from_config(self) -> None:
         verts_node = self.config.get_node("boundary.vertices") or []

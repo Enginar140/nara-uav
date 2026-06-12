@@ -1,14 +1,18 @@
 """WaypointChain -- GUIDED DO_REPOSITION sequencing icin waypoint zinciri.
 
 C++ WaypointChain portu: acceptance radius ile ilerleme, smart replace, validate.
+Ek: along-track gecis tespiti -- ucak WP'nin dikme duzlemini gectiyse (yanal
+sapma sinirli olmak kosuluyla) WP'ye "ulasti" sayilir; geri donup nokta
+kovalama davranisini onler (Dubins-ornekli sik waypoint'lerde kritik).
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import List, Optional
 
-from ..core.geo import haversine_distance
+from ..core.geo import haversine_distance, position_to_ned
 from ..core.types import Boundary, HSSZone, Position
 
 
@@ -33,20 +37,29 @@ class WaypointChain:
         self._idx = 0
         self._circular = False
         self._complete = False
+        self._leg_start: Optional[Position] = None
 
     def load(self, chain: List[Waypoint], circular: bool = False) -> None:
         self._chain = list(chain)
         self._circular = circular
         self._idx = 0
         self._complete = not chain
+        self._leg_start = None
 
     def update(self, own_pos: Position) -> ChainStatus:
         if not self._chain:
             return ChainStatus.EMPTY
         if self._complete and not self._circular:
             return ChainStatus.CHAIN_COMPLETE
+        if self._leg_start is None:
+            self._leg_start = own_pos
         target = self._chain[self._idx]
-        if haversine_distance(own_pos, target.position) <= target.acceptance_radius_m:
+        reached = (haversine_distance(own_pos, target.position)
+                   <= target.acceptance_radius_m)
+        if not reached:
+            reached = self._passed_along_track(own_pos, target)
+        if reached:
+            self._leg_start = target.position
             self._idx += 1
             if self._idx >= len(self._chain):
                 if self._circular:
@@ -56,6 +69,25 @@ class WaypointChain:
                     return ChainStatus.CHAIN_COMPLETE
             return ChainStatus.WAYPOINT_REACHED
         return ChainStatus.IN_PROGRESS
+
+    def _passed_along_track(self, own_pos: Position, target: Waypoint) -> bool:
+        """Bacak [leg_start -> WP] uzerinde WP dikmesini gectik mi?
+
+        Yanal sapma 2*acceptance'i asarsa gecis sayilmaz (capraz ucuslarda
+        yanlis tetiklenme onlemi).
+        """
+        if self._leg_start is None:
+            return False
+        leg = position_to_ned(target.position, self._leg_start)
+        leg_len_sq = leg.north * leg.north + leg.east * leg.east
+        if leg_len_sq < 1.0:
+            return False
+        own = position_to_ned(own_pos, self._leg_start)
+        t = (own.north * leg.north + own.east * leg.east) / leg_len_sq
+        if t < 1.0:
+            return False
+        cross = abs(own.north * leg.east - own.east * leg.north) / math.sqrt(leg_len_sq)
+        return cross <= 2.0 * target.acceptance_radius_m
 
     def current_target(self) -> Optional[Waypoint]:
         if not self._chain or (self._complete and not self._circular):
@@ -76,6 +108,7 @@ class WaypointChain:
     def advance_to_next(self) -> bool:
         if not self._chain or (self._complete and not self._circular):
             return False
+        self._leg_start = self._chain[self._idx].position
         nxt = self._idx + 1
         if nxt >= len(self._chain):
             if self._circular:
@@ -96,6 +129,7 @@ class WaypointChain:
         self._idx = 0
         self._circular = False
         self._complete = False
+        self._leg_start = None
 
     def replace(self, new_chain: List[Waypoint]) -> None:
         if not new_chain:
@@ -104,6 +138,7 @@ class WaypointChain:
         self._chain = list(new_chain)
         self._complete = False
         self._idx = 0
+        self._leg_start = None
 
     def is_empty(self) -> bool:
         return len(self._chain) == 0
