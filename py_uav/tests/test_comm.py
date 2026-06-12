@@ -21,6 +21,7 @@ class FakeIO:
         self.command_int = []
         self.command_long = []
         self.local_ned = []
+        self.attitude = []
 
     def send_command_int(self, *args):
         self.command_int.append(args)
@@ -32,6 +33,10 @@ class FakeIO:
 
     def send_set_position_target_local_ned(self, *args):
         self.local_ned.append(args)
+        return True
+
+    def send_set_attitude_target(self, *args):
+        self.attitude.append(args)
         return True
 
 

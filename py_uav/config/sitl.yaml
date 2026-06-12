@@ -50,6 +50,23 @@ nav:
   waypoint:
     acceptance_radius_m: 50.0       # along-track gecis tespiti ile kucultuldu
     lookahead_factor: 1.0
+  # Sanal FBWA (GUIDED SET_ATTITUDE_TARGET) -- detay: default.yaml
+  attitude:
+    enabled: true
+    roll_kp: 1.6
+    roll_kd: 0.35
+    pitch_kp: 0.9
+    pitch_kd: 0.20
+    max_bank_deg: 45.0
+    pitch_min_deg: -30.0
+    pitch_max_deg: 18.0
+    pitch_trim_deg: 2.0
+    min_interval_s: 0.08
+    horizon_s: 4.0
+    horizon_step_s: 0.8
+    floor_margin_m: 15.0
+    ceiling_margin_m: 10.0
+    min_airspeed_margin: 2.0
   speed:
     cruise: 20.0
     max: 35.0
@@ -91,6 +108,7 @@ mission:
     vision_fallback: true
     vision_module: "vision_tracker_opencv"
     vision_lock_age_s: 0.5
+    attitude_pursuit: true
   qr_dive:
     approach_altitude_m: 120.0
     # Uygulama bunu guvenlik tabani + pull-out kaybiyla asagidan sinirlar.
@@ -107,6 +125,7 @@ mission:
     perception_lock_age_s: 0.5
     perception_module: "qr_simple"
     on_complete: "rtl"
+    attitude_dive: true
   patrol:
     boundary_inset_m: 50.0
     cruise_altitude_m: 100.0

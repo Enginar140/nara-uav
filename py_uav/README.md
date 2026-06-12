@@ -17,6 +17,13 @@ ArduPlane içinde olur. Üst düzey hata yüzeyi minimumdur:
   (kaynak: `cpp_uav_external/ardupilot_repo` nara/local-control fork'u). Sistem
   yalnız **pozisyon hedefleri** gönderir: `DO_REPOSITION` (global) ve
   `SET_POSITION_TARGET_LOCAL_NED` BODY/LOCAL **pozisyon ofseti** (terminal dalış).
+- **Sanal FBWA (`nav/attitude_law.py`):** Takip/dalış terminal fazlarında GUIDED
+  içinde `SET_ATTITUDE_TARGET` ile doğrudan roll/pitch açı talebi — FBWA'nın
+  kontrol yetkisi, ama mod GUIDED kaldığı için şartnameye göre **otonom** sayılır
+  (gerçek FBWA yarı-oto = manuel, 6.1.7). Her komut öncesi ileri-projeksiyon
+  emniyet süpervizörü (HSS/sınır/irtifa bandı + stall koruması); ihlalde komut
+  gönderilmez ve görev modu pozisyon güdümüne düşer; akış kesilirse firmware
+  GUIDED timeout failsafe'i devrededir. `nav.attitude.enabled` ile açılır.
 
 ## Mimari (katmanlar)
 
@@ -89,7 +96,7 @@ GCS'ten STATUSTEXT ile komut: `BND:...`, `HSS:...`, `FREE` (PATROL),
 ## Test
 
 ```bash
-cd py_uav && python -m pytest -q          # 126 test
+cd py_uav && python -m pytest -q          # 140 test
 ```
 
 ## STATUSTEXT formatları (GCS → companion)

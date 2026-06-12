@@ -40,6 +40,22 @@ MAV_CMD_GUIDED_CHANGE_ALTITUDE = 43001
 MAV_CMD_GUIDED_CHANGE_HEADING = 43002
 
 
+def _euler_to_quaternion(roll_rad: float, pitch_rad: float, yaw_rad: float):
+    """ZYX (yaw-pitch-roll) Euler -> MAVLink quaternion [w, x, y, z]."""
+    cr = math.cos(roll_rad * 0.5)
+    sr = math.sin(roll_rad * 0.5)
+    cp = math.cos(pitch_rad * 0.5)
+    sp = math.sin(pitch_rad * 0.5)
+    cy = math.cos(yaw_rad * 0.5)
+    sy = math.sin(yaw_rad * 0.5)
+    return [
+        cr * cp * cy + sr * sp * sy,
+        sr * cp * cy - cr * sp * sy,
+        cr * sp * cy + sr * cp * sy,
+        cr * cp * sy - sr * sp * cy,
+    ]
+
+
 class ArduPilotMode(IntEnum):
     MANUAL = 0
     CIRCLE = 1
@@ -246,6 +262,43 @@ class FlightCommander:
         down = math.sin(po) * range_m
         return self._send_local_ned_target(
             m.MAV_FRAME_BODY_OFFSET_NED, fwd, right, down, yaw_deg)
+
+    # ---------------- ATTITUDE (sanal FBWA) ----------------
+    def set_attitude(self, roll_deg: float, pitch_deg: float,
+                     yaw_deg: float = math.nan, thrust: float = -1.0) -> bool:
+        """GUIDED icinde dogrudan roll/pitch ACI talebi (FBWA esdegeri).
+
+        ArduPlane SET_ATTITUDE_TARGET'i guided forced-attitude olarak isler;
+        akis kesilirse firmware GUIDED_TIMEOUT sonrasi son guided hedefe doner
+        (dogal failsafe). Surekli stream (>=5 Hz) gerektirir.
+
+        yaw_deg NaN -> yaw zorlanmaz (koordineli donus serbest).
+        thrust < 0  -> throttle zorlanmaz (TECS hiz kontrolu devrede kalir).
+        """
+        with self._lock:
+            if not self.is_in_guided_mode():
+                _log.warning("set_attitude: GUIDED modda degil (mod=%s)",
+                             self._current_mode.name)
+                return False
+            if not (math.isfinite(roll_deg) and math.isfinite(pitch_deg)):
+                return False
+            # ATTITUDE_TARGET_TYPEMASK: 1/2/4 = body rate ignore, 64 = thrust
+            # ignore, 128 = attitude ignore. Rate'leri kullanmiyoruz.
+            tm = 1 | 2 | 4
+            use_thrust = 0.0 <= thrust <= 1.0
+            if not use_thrust:
+                tm |= 64
+                thrust = 0.0
+            yaw_valid = math.isfinite(yaw_deg)
+            yaw_rad = math.radians(yaw_deg) if yaw_valid else 0.0
+            q = _euler_to_quaternion(math.radians(roll_deg),
+                                     math.radians(pitch_deg), yaw_rad)
+            sent = self._io.send_set_attitude_target(
+                self.cfg.target_sys, self.cfg.target_comp, tm, q,
+                0.0, 0.0, 0.0, float(thrust))
+            if sent:
+                self.commands_sent += 1
+            return sent
 
     # ---------------- GUIDED ext komutlari ----------------
     def change_airspeed(self, speed_ms: float, acceleration_ms2: float = 0.0,

@@ -18,6 +18,7 @@ from ..core.types import Position, UAVState
 from ..infra.log import get_logger
 from ..safety.safety_gate import SafetyGate
 from ..world_model.world_model import WorldModel
+from .attitude_law import AttitudeDirectLaw, AttitudeLawConfig
 from .planner import PathPlanner
 from .speed_manager import SpeedManager
 from .waypoint_chain import ChainStatus, Waypoint, WaypointChain
@@ -34,7 +35,8 @@ class NavigationEngine:
                  waypoint_acceptance_radius_m: float = 80.0,
                  waypoint_lookahead_factor: float = 1.0,
                  keepalive_interval_s: float = 4.0,
-                 velocity_lookahead_s: float = 3.0):
+                 velocity_lookahead_s: float = 3.0,
+                 attitude_config: Optional[AttitudeLawConfig] = None):
         self._planner = planner
         self._cmd = commander
         self._gate = safety_gate
@@ -62,6 +64,9 @@ class NavigationEngine:
         # Aktif rotanin homotopi imzasi: replan ayni yani tercih eder
         # (HSS etrafinda yan flip-flop'unu planner seviyesinde keser).
         self._last_signature: tuple = ()
+        # Sanal FBWA: GUIDED icinde dogrudan roll/pitch kanunu (opsiyonel)
+        self._att_law = AttitudeDirectLaw(attitude_config)
+        self._last_att_t = 0.0
 
     # ===================== Rota planlama =====================
     def plan_route(self, goal: Position, airspeed: float = -1.0,
@@ -322,6 +327,11 @@ class NavigationEngine:
         if t.frame == PerceptionFrame.POLAR:
             return self.fly_bearing(t.a, t.b, t.c, yaw)
         if t.frame == PerceptionFrame.VISION_LOS:
+            # sanal FBWA aciksa once dogrudan attitude kanunu dene; emniyet
+            # superviszoru reddederse pozisyon-adimi yoluna dus.
+            # (perception pitch_off +asagi; kanun +yukari bekler -> isaret cevir)
+            if self._att_law.cfg.enabled and self.fly_attitude_los(t.a, -t.b):
+                return True
             return self.pursue_vision_target(t.a, t.b, t.c, yaw)
         if t.frame == PerceptionFrame.VELOCITY_NED:
             return self.fly_velocity_ned(t.a, t.b, t.c, yaw)
@@ -389,6 +399,71 @@ class NavigationEngine:
             if sent:
                 self._last_cmd_t = now_monotonic()
             return sent
+
+    # ===================== sanal FBWA (attitude direct law) =====================
+    def attitude_law_enabled(self) -> bool:
+        return self._att_law.cfg.enabled
+
+    def reset_attitude_law(self) -> None:
+        with self._lock:
+            self._att_law.reset()
+
+    def fly_attitude_los(self, yaw_err_deg: float, pitch_err_deg: float,
+                         thrust: float = -1.0) -> bool:
+        """LOS hatalarindan dogrudan roll/pitch talebi (GUIDED, SET_ATTITUDE_TARGET).
+
+        Emniyet superviszoru: komut edilen yatisla ufuk boyunca yorunge
+        HSS buffer/sinir/irtifa-bandina giriyorsa komut GONDERILMEZ ->
+        cagiran ayni tick'te pozisyon gudumune duser. Stall korumasi pitch'i
+        kirpar. Stream kesilirse firmware GUIDED timeout failsafe'i devrede.
+        """
+        with self._lock:
+            if not self._att_law.cfg.enabled:
+                return False
+            if self._should_block_normal():
+                return False
+            now = now_monotonic()
+            if now - self._last_att_t < self._att_law.cfg.min_interval_s:
+                return True  # akis zaten guncel; cagirana basari raporla
+            own = self._wm.get_own_state()
+            if not own.is_valid():
+                return False
+            if not (math.isfinite(yaw_err_deg) and math.isfinite(pitch_err_deg)):
+                return False
+            roll, pitch = self._att_law.compute(yaw_err_deg, pitch_err_deg, now)
+            pitch = self._att_law.clamp_for_airspeed(
+                pitch, own.airspeed, self._speed.cfg.min_speed)
+            if not self._attitude_projection_safe(own, roll, pitch):
+                # bir kez daha kanatlari duzleterek dene: hedef manevrasi
+                # yuzunden degil cevre yuzunden guvensizsek duz ucus gecebilir
+                if not self._attitude_projection_safe(own, 0.0, min(pitch, 0.0)):
+                    _log.warning("attitude talebi emniyet projeksiyonunu gecemedi, "
+                                 "pozisyon gudumune donulmeli")
+                    return False
+                roll = 0.0
+                pitch = min(pitch, 0.0)
+            sent = self._cmd.set_attitude(roll, pitch, math.nan, thrust)
+            if sent:
+                self._last_att_t = now
+                self._last_cmd_t = now
+            return sent
+
+    def _attitude_projection_safe(self, own, roll_deg: float,
+                                  pitch_deg: float) -> bool:
+        cfg = self._att_law.cfg
+        floor = self._gate.cfg.min_altitude_m + cfg.floor_margin_m
+        ceiling = self._gate.cfg.max_altitude_m - cfg.ceiling_margin_m
+        for p in self._att_law.project_trajectory(own, roll_deg, pitch_deg):
+            if not (floor <= p.altitude <= ceiling):
+                return False
+            # irtifa bandini yukarida kendimiz kontrol ettik; gate'in kendi
+            # bandina takilmamasi icin orta deger ver
+            flat = Position(p.latitude, p.longitude,
+                            (self._gate.cfg.min_altitude_m
+                             + self._gate.cfg.max_altitude_m) * 0.5)
+            if not self._gate.validate_position(flat):
+                return False
+        return True
 
     def release_guided_hold(self) -> bool:
         """Stale GUIDED durumunu (yaw hedefi/son waypoint) temizle.

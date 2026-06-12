@@ -15,6 +15,7 @@ from ..core.time_utils import now_monotonic
 from ..core.types import Boundary, HSSZone, MissionMode, Position, RiskLevel
 from ..infra.event_bus import Event, EventBus, EventType
 from ..infra.log import get_logger, setup_logging
+from ..nav.attitude_law import AttitudeLawConfig
 from ..nav.navigation_engine import NavigationEngine
 from ..nav.planner import PathPlanner, PlannerConfig
 from ..nav.speed_manager import SpeedConfig, SpeedManager
@@ -158,6 +159,23 @@ class Application:
             min_plan_interval_s=c.get_int("nav.command.min_plan_interval_ms", 2000) / 1000.0,
             waypoint_acceptance_radius_m=c.get_float("nav.waypoint.acceptance_radius_m", 80.0),
             waypoint_lookahead_factor=c.get_float("nav.waypoint.lookahead_factor", 1.0),
+            attitude_config=AttitudeLawConfig(
+                enabled=c.get_bool("nav.attitude.enabled", False),
+                roll_kp=c.get_float("nav.attitude.roll_kp", 1.6),
+                roll_kd=c.get_float("nav.attitude.roll_kd", 0.35),
+                pitch_kp=c.get_float("nav.attitude.pitch_kp", 0.9),
+                pitch_kd=c.get_float("nav.attitude.pitch_kd", 0.20),
+                max_bank_deg=c.get_float("nav.attitude.max_bank_deg", 45.0),
+                pitch_min_deg=c.get_float("nav.attitude.pitch_min_deg", -30.0),
+                pitch_max_deg=c.get_float("nav.attitude.pitch_max_deg", 18.0),
+                pitch_trim_deg=c.get_float("nav.attitude.pitch_trim_deg", 2.0),
+                min_interval_s=c.get_float("nav.attitude.min_interval_s", 0.08),
+                horizon_s=c.get_float("nav.attitude.horizon_s", 4.0),
+                horizon_step_s=c.get_float("nav.attitude.horizon_step_s", 0.8),
+                floor_margin_m=c.get_float("nav.attitude.floor_margin_m", 15.0),
+                ceiling_margin_m=c.get_float("nav.attitude.ceiling_margin_m", 10.0),
+                min_airspeed_margin=c.get_float("nav.attitude.min_airspeed_margin", 2.0),
+            ),
         )
 
     def _init_perception(self) -> None:
@@ -289,6 +307,7 @@ class Application:
                 vision_fallback=c.get_bool("mission.follow.vision_fallback", False),
                 vision_module_id=c.get_str("mission.follow.vision_module", "vision_tracker"),
                 vision_lock_age_s=c.get_float("mission.follow.vision_lock_age_s", 0.5),
+                attitude_pursuit=c.get_bool("mission.follow.attitude_pursuit", False),
             ),
             qr_dive=QRDiveConfig(
                 approach_altitude_m=c.get_float("mission.qr_dive.approach_altitude_m", 120.0),
@@ -305,6 +324,7 @@ class Application:
                 use_perception_terminal=c.get_bool("mission.qr_dive.use_perception_terminal", True),
                 perception_lock_age_s=c.get_float("mission.qr_dive.perception_lock_age_s", 0.5),
                 perception_module_id=c.get_str("mission.qr_dive.perception_module", "qr_simple"),
+                attitude_dive=c.get_bool("mission.qr_dive.attitude_dive", False),
             ),
             qr_dive_on_complete=parse_post_dive_action(
                 c.get_str("mission.qr_dive.on_complete", "rtl")),

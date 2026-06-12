@@ -53,6 +53,10 @@ class QRDiveConfig:
     use_perception_terminal: bool = True
     perception_lock_age_s: float = 0.5
     perception_module_id: str = "qr_simple"
+    # Sanal FBWA: dalis fazinda dogrudan roll/pitch kanunu (nav.fly_attitude_los).
+    # Algi kilidi varsa zaten dispatch icinde kullanilir; bu bayrak KOR dalista
+    # da (hedef konum geometrisinden) attitude kanununu acar.
+    attitude_dive: bool = False
 
 
 class QRDiveMode(IMissionMode):
@@ -217,8 +221,13 @@ class QRDiveMode(IMissionMode):
                       dist, own.position.altitude)
             self._enter_phase(DivePhase.CLIMB)
             return
-        # Once taze algi kilidi (frame-aware dispatch); yoksa kor pozisyon-adimi
+        # Once taze algi kilidi (frame-aware dispatch); attitude kanunu aciksa
+        # dispatch icinde VISION_LOS dogrudan roll/pitch'e gider
         if self._try_perception_dispatch():
+            return
+        # kor dalis: hedef geometrisinden attitude kanunu (sanal FBWA)
+        if (self.cfg.attitude_dive and self._nav.attitude_law_enabled()
+                and self._fly_attitude_dive(own)):
             return
         # pozisyon-adimi dalis (velocity yok)
         pitch_rad = math.radians(self.cfg.dive_pitch_deg)
@@ -229,6 +238,24 @@ class QRDiveMode(IMissionMode):
         next_pos = geo.destination_point(own.position, bearing_to_target, forward_speed * step)
         next_pos.altitude = max(own.position.altitude - descent_rate * step, self.cfg.min_altitude_m)
         self._nav.fly_direct(next_pos, self.cfg.dive_speed_ms)
+
+    def _fly_attitude_dive(self, own: UAVState) -> bool:
+        """Hedefe LOS hatalari -> dogrudan attitude dalisi.
+
+        Pitch hatasi LOS yukselis acisina gore; dalis aci limiti kanunun
+        zarfinda (pitch_min) kisitlanir. Emniyet superviszoru (irtifa tabani
+        dahil) reddederse False doner -> pozisyon-adimi yoluna dusulur.
+        """
+        dist = geo.haversine_distance(own.position, self._dive_target)
+        if dist < 1.0:
+            return False
+        yaw_err = geo.angle_difference(
+            geo.bearing(own.position, self._dive_target), own.heading)
+        elev = math.degrees(math.atan2(
+            self._dive_target.altitude - own.position.altitude, dist))
+        elev = max(self.cfg.dive_pitch_deg, elev)  # asiri dik talebi sinirla
+        pitch_err = elev - own.attitude.pitch
+        return self._nav.fly_attitude_los(yaw_err, pitch_err)
 
     def _tick_climb(self, own: UAVState) -> None:
         if (own.position.altitude >= self.cfg.climb_altitude_m
@@ -254,3 +281,4 @@ class QRDiveMode(IMissionMode):
     def _enter_phase(self, phase: DivePhase) -> None:
         self._phase = phase
         self._phase_start = now_monotonic()
+        self._nav.reset_attitude_law()

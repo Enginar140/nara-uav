@@ -62,6 +62,10 @@ class FollowConfig:
     vision_fallback: bool = False
     vision_module_id: str = "vision_tracker"
     vision_lock_age_s: float = 0.5
+    # Sanal FBWA: PURSUIT fazinda PN kesisim noktasina dogrudan roll/pitch
+    # kanunu (nav.fly_attitude_los). Emniyet superviszoru reddederse ayni
+    # tick'te pozisyon (DO_REPOSITION) yoluna duser.
+    attitude_pursuit: bool = False
 
 
 class FollowMode(IMissionMode):
@@ -171,6 +175,7 @@ class FollowMode(IMissionMode):
         self._disable_perception()
         self._nav.clear_route()
         self._reset_route_lock()
+        self._nav.reset_attitude_law()
 
     def tick(self, own_state: UAVState) -> None:
         if self._target_id < 0:
@@ -236,6 +241,13 @@ class FollowMode(IMissionMode):
             self._los_init = False
             return
         intercept = self._predict_with_pn(own, target)
+        # sanal FBWA: kesisim noktasina dogrudan attitude kanunu (en cevik yol)
+        if (self.cfg.attitude_pursuit and self._nav.attitude_law_enabled()
+                and self._fly_attitude_to(own, intercept)):
+            if self._nav.has_active_route():
+                self._nav.clear_route()
+                self._reset_route_lock()
+            return
         if self._nav.can_fly_direct(intercept):
             if self._nav.has_active_route():
                 self._nav.clear_route()
@@ -243,6 +255,16 @@ class FollowMode(IMissionMode):
             self._fly_direct_stable(intercept, self.cfg.pursuit_speed_ms)
         else:
             self._tick_routed_target(own, intercept, self.cfg.pursuit_speed_ms)
+
+    def _fly_attitude_to(self, own: UAVState, aim: Position) -> bool:
+        """Hedef noktaya LOS hatalarini cikar, attitude kanununa ver."""
+        dist = geo.haversine_distance(own.position, aim)
+        if dist < 1.0:
+            return False
+        yaw_err = geo.angle_difference(geo.bearing(own.position, aim), own.heading)
+        elev = math.degrees(math.atan2(aim.altitude - own.position.altitude, dist))
+        pitch_err = elev - own.attitude.pitch
+        return self._nav.fly_attitude_los(yaw_err, pitch_err)
 
     def _tick_reacquire(self, own: UAVState) -> None:
         since_lost = elapsed_s(self._target_lost_t)
@@ -414,6 +436,7 @@ class FollowMode(IMissionMode):
             self._nav.clear_route()
             self._reset_route_lock()
             self._reset_direct_hold()
+            self._nav.reset_attitude_law()
         if phase == FollowPhase.REACQUIRE:
             self._filtered_target = None
             self._reset_direct_hold()

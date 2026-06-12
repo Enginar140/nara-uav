@@ -146,6 +146,15 @@ class FakeFollowNav:
     def release_guided_hold(self):
         return True
 
+    def attitude_law_enabled(self):
+        return False
+
+    def reset_attitude_law(self):
+        pass
+
+    def fly_attitude_los(self, yaw_err_deg, pitch_err_deg, thrust=-1.0):
+        return False
+
 
 def test_follow_approach_to_pursuit():
     wm, fc, io, nav = _stack()

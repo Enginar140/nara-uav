@@ -202,6 +202,21 @@ class MavlinkIO:
             )
         return True
 
+    def send_set_attitude_target(
+        self, target_sys, target_comp, type_mask, q,
+        body_roll_rate=0.0, body_pitch_rate=0.0, body_yaw_rate=0.0,
+        thrust=0.0, time_boot_ms=0,
+    ) -> bool:
+        """SET_ATTITUDE_TARGET: GUIDED'de roll/pitch aci talebi (sanal FBWA)."""
+        if self.master is None:
+            return False
+        with self._send_lock:
+            self.master.mav.set_attitude_target_send(
+                time_boot_ms, target_sys, target_comp, type_mask, q,
+                body_roll_rate, body_pitch_rate, body_yaw_rate, thrust,
+            )
+        return True
+
     def send_heartbeat(self) -> bool:
         if self.master is None:
             return False
