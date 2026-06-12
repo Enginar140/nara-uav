@@ -224,12 +224,18 @@ perception:
   combat:
     enabled: false
     id: "combat_vision"
-    mode: "lock"            # lock (hava hedefi) | qr (kamikaze yer hedefi)
-    av_w_frac: 0.40         # AV (hedef vurus alani) genislik orani (Sekil 2'ye gore ayarla)
-    av_h_frac: 0.40
+    mode: "lock"            # lock (hava hedefi) | qr (kamikaze); gorev modlari
+                            # runtime'da set_mode ile degistirir (tek kamera/video)
+    av_w_frac: 0.50         # AV oranlari sartname Sekil 1: yatay %25+%25 kenar
+    av_h_frac: 0.80         # dikey %10+%10 kenar
     lock_min_frac: 0.06     # eksen oran esigi (sartname %5 + tolerans)
     detect_every_n: 6       # her N frame'de YOLO; arada ROI (FPS)
     record_video: false
+    guidance: "los"         # los: VISION_LOS -> sanal FBWA attitude kanunu
+                            # velocity: eski merkeze-getirme PID (govde hizi)
+    h_fov_deg: 60.0         # kamera yatay/dikey gorus alani (LOS aci donusumu)
+    v_fov_deg: 45.0
+    default_range_m: 80.0   # LOS hedefine atanan nominal menzil
     camera:
       type: "device"        # device | file | rtsp | http
       device_index: 0
@@ -259,15 +265,16 @@ perception:
       max_vertical_ms: 4.0
     lock:
       min_lock_s: 4.0            # sartname kesintisiz kilit suresi
-      max_gap_s: 0.5            # tek seferde tolere edilen kayip
-      invalid_tolerance_s: 0.8  # pencere boyunca toplam kayip butcesi
+      # sartname kesinti butcesi: 4 sn'de %5 = 200 ms; esikler altinda kalir
+      max_gap_s: 0.15            # tek seferde tolere edilen kayip
+      invalid_tolerance_s: 0.18  # pencere boyunca toplam kayip butcesi
       require_autonomous: true
       prevent_same_target_twice: true
       require_airborne: true
     video:
       path: "lock_record.mp4"
-      fps: 15.0                  # sabit (sartname min 15)
-      fourcc: "mp4v"            # yarisma icin "avc1" (H264) tercih edilir
+      fps: 15.0                  # sabit (sartname min 15); duvar-saati pacing
+      fourcc: "avc1"            # H264 (sartname); acilamazsa mp4v fallback
 
 # Yarışma alanı sınırları
 # SITL test: v9.1 San Francisco boundary

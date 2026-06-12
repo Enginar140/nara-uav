@@ -27,7 +27,8 @@ from ..opencv_vision_tracker import CameraConfig
 from ..perception_types import PerceptionFrame, PerceptionTarget
 from .centering_pid import CenteringConfig, CenteringController
 from .detection import BBox, Detection, FrameGeometry
-from .lock_evaluator import (LockEvaluatorConfig, LockEvent, LockOnEvaluator)
+from .lock_evaluator import (LockEvaluatorConfig, LockEvent, LockOnEvaluator,
+                             LockState)
 from .target_estimator import EstimatorConfig, TargetEstimator
 
 _log = get_logger("combat_tracker")
@@ -42,14 +43,22 @@ except ImportError:
 @dataclass
 class CombatTrackerConfig:
     id: str = "combat_vision"
-    mode: str = "lock"               # lock | qr
-    av_w_frac: float = 0.40
-    av_h_frac: float = 0.40
+    mode: str = "lock"               # lock | qr (runtime'da set_mode ile degisir)
+    # AV oranlari sartname Sekil 1'den: yatay %25+%25 kenar -> genislik %50,
+    # dikey %10+%10 kenar -> yukseklik %80.
+    av_w_frac: float = 0.50
+    av_h_frac: float = 0.80
     lock_min_frac: float = 0.06
     detect_every_n: int = 6          # her N frame'de bir YOLO (arada ROI)
     record_video: bool = False
     worker_sleep_ms: int = 1
     airborne_default: bool = True
+    # guidance cercevesi: "los" -> VISION_LOS aci hatalari (sanal FBWA attitude
+    # kanunu kullanir); "velocity" -> eski merkeze-getirme PID govde hizi.
+    guidance: str = "los"
+    h_fov_deg: float = 60.0
+    v_fov_deg: float = 45.0
+    default_range_m: float = 80.0    # LOS hedefi icin nominal menzil
     camera: CameraConfig = None
     estimator: EstimatorConfig = field(default_factory=EstimatorConfig)
     centering: CenteringConfig = field(default_factory=CenteringConfig)
@@ -126,6 +135,27 @@ class CombatVisionTracker(IPerceptionModule):
     def lock_state(self):
         return self._lock_eval.state
 
+    def set_mode(self, mode: str) -> None:
+        """Calisma aninda lock <-> qr gecisi (kamera ve video kaydi ACIK kalir).
+
+        Sartname ayni turda hem kilitlenme hem kamikaze'ye izin verir ve ayni
+        kamerayi sart kosar; modul degistirmek yerine mod degistirilir, boylece
+        tek parca video kaniti korunur.
+        """
+        if mode not in ("lock", "qr"):
+            return
+        with self._lock:
+            if mode == self.cfg.mode:
+                return
+            self.cfg.mode = mode
+            self._lazy_build()
+            self._est = TargetEstimator(self.cfg.estimator)
+            self._pid.reset()
+            self._lock_eval.reset()
+            self._had_target = False
+            self._cur_tid = -1
+        _log.info("CombatVisionTracker mod degisti -> %s", mode)
+
     # ---- cekirdek adim (test edilebilir) ----
     def process_frame(self, frame_bgr, t: float, server_ms: int,
                       is_autonomous: bool) -> ProcessResult:
@@ -135,7 +165,7 @@ class CombatVisionTracker(IPerceptionModule):
         self._frame_n += 1
 
         if self.cfg.mode == "qr":
-            return self._process_qr(frame_bgr, t)
+            return self._process_qr(frame_bgr, t, server_ms)
 
         det = self._acquire(frame_bgr, w, h)
         est_det = self._est.update(t, det)
@@ -146,40 +176,65 @@ class CombatVisionTracker(IPerceptionModule):
 
         guidance = None
         if est_det is not None:
-            nx, ny = est_det.center_offset_norm()
-            vx, vy, vz = self._pid.update(nx, ny, t)
-            guidance = PerceptionTarget(
-                frame=PerceptionFrame.VELOCITY_BODY, a=vx, b=vy, c=vz,
-                confidence=est_det.confidence or 0.5, stamp_us=now_us(),
-                source_tag=self.id(), label="lock_pursuit")
+            guidance = self._make_guidance(est_det, t, label="lock_pursuit")
 
         if self._recorder is not None and self._recorder.is_open:
-            locked = ev is not None or self._lock_eval.current_lock() is not None
-            lock_box = None
-            if est_det is not None and (locked or self._lock_eval.current_lock()):
-                lock_box = est_det.box
+            # AH dortgeni KILIT PENCERESI boyunca cizilir (TRACKING + LOCKED).
+            # Hakem, bildirilen bitisten 5 sn geriye sarip 4 sn'lik kilidi
+            # arar -- o pencere TRACKING fazidir; dortgensiz frame'ler kilidi
+            # gecersiz kilar (sartname: 'kilitlenme suresince her frame'e').
+            window_active = self._lock_eval.state in (LockState.TRACKING,
+                                                      LockState.LOCKED)
+            lock_box = est_det.box if (est_det is not None and window_active) else None
             self._recorder.write(frame_bgr, server_ms, av_box=self._geom.av_box(),
-                                 lock_box=lock_box, locked=bool(lock_box))
+                                 lock_box=lock_box, locked=lock_box is not None)
 
         return ProcessResult(guidance=guidance, lock_event=ev, detection=est_det)
 
-    def _process_qr(self, frame_bgr, t: float) -> ProcessResult:
-        if self._qr is None:
-            return ProcessResult()
-        res = self._qr.detect(frame_bgr)
+    def _process_qr(self, frame_bgr, t: float, server_ms: int) -> ProcessResult:
+        res = self._qr.detect(frame_bgr) if self._qr is not None else None
+        det = None
+        guidance = None
+        if res is not None:
+            det = Detection(box=res.box, frame_w=self._geom.width,
+                            frame_h=self._geom.height, confidence=0.9,
+                            label=res.payload)
+            guidance = self._make_guidance(det, t, label=res.payload)
+        # Kamikaze kaniti da VIDEO ile dogrulanir (sartname 6.2: 'QR mesaji
+        # video uzerinden kontrol edilecektir') -> QR modunda da her frame yaz;
+        # cozulen QR kutusu kirmizi isaretlenir.
+        if self._recorder is not None and self._recorder.is_open:
+            self._recorder.write(frame_bgr, server_ms, av_box=None,
+                                 lock_box=det.box if det is not None else None,
+                                 locked=det is not None)
         if res is None:
             return ProcessResult()
-        # QR merkezine yonel (dalis guidance)
-        det = Detection(box=res.box, frame_w=self._geom.width,
-                        frame_h=self._geom.height, confidence=0.9, label=res.payload)
-        nx, ny = det.center_offset_norm()
-        vx, vy, vz = self._pid.update(nx, ny, t)
-        guidance = PerceptionTarget(
-            frame=PerceptionFrame.VELOCITY_BODY, a=vx, b=vy, c=vz,
-            confidence=0.9, stamp_us=now_us(), source_tag=self.id(),
-            label=res.payload)
         return ProcessResult(guidance=guidance, detection=det,
                              qr_payload=res.payload)
+
+    def _make_guidance(self, det: Detection, t: float,
+                       label: str) -> PerceptionTarget:
+        """Tespitten guidance hedefi uret (cfg.guidance secimine gore).
+
+        "los": normalize merkez ofsetini kamera FOV'uyla aci hatasina cevirir
+        -> VISION_LOS. NavigationEngine.dispatch bunu (aciksa) sanal-FBWA
+        attitude kanununa, degilse pozisyon-adimina yonlendirir.
+        "velocity": eski merkeze-getirme PID -> govde hiz demand'i.
+        """
+        nx, ny = det.center_offset_norm()
+        conf = det.confidence or 0.5
+        if self.cfg.guidance == "velocity":
+            vx, vy, vz = self._pid.update(nx, ny, t)
+            return PerceptionTarget(
+                frame=PerceptionFrame.VELOCITY_BODY, a=vx, b=vy, c=vz,
+                confidence=conf, stamp_us=now_us(), source_tag=self.id(),
+                label=label)
+        yaw_off = nx * self.cfg.h_fov_deg * 0.5
+        pitch_off = ny * self.cfg.v_fov_deg * 0.5   # +asagi (VISION_LOS kurali)
+        return PerceptionTarget(
+            frame=PerceptionFrame.VISION_LOS, a=yaw_off, b=pitch_off,
+            c=self.cfg.default_range_m, confidence=conf, stamp_us=now_us(),
+            source_tag=self.id(), label=label)
 
     # ---- dedektor + ROI birlesimi ----
     def _acquire(self, frame_bgr, w: int, h: int) -> Optional[Detection]:

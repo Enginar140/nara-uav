@@ -85,6 +85,11 @@ class PerceptionEngine:
         with self._lock:
             return self._active_id
 
+    def get(self, module_id: str) -> Optional[IPerceptionModule]:
+        """Kayitli modul nesnesine erisim (ornek: mod degisimi icin)."""
+        with self._lock:
+            return self._modules.get(module_id)
+
     def registered(self) -> List[str]:
         with self._lock:
             return sorted(self._modules.keys())

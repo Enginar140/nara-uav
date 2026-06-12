@@ -100,7 +100,18 @@ def test_combat_lock_and_guidance_via_process_frame():
         t += 0.1
     assert achieved is not None
     assert last_guidance is not None
-    assert last_guidance.frame == PerceptionFrame.VELOCITY_BODY
+    # varsayilan guidance artik VISION_LOS (sanal FBWA attitude kanunu yolu)
+    assert last_guidance.frame == PerceptionFrame.VISION_LOS
+
+
+def test_combat_velocity_guidance_when_configured():
+    frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    trk = CombatVisionTracker(CombatTrackerConfig(mode="lock", guidance="velocity"),
+                              detector=_FakeDet(), roi=None)
+    res = trk.process_frame(frame, 0.0, 0, is_autonomous=True)
+    res = trk.process_frame(frame, 0.1, 100, is_autonomous=True)
+    assert res.guidance is not None
+    assert res.guidance.frame == PerceptionFrame.VELOCITY_BODY
 
 
 def test_combat_not_autonomous_no_lock():
@@ -128,7 +139,7 @@ def test_combat_qr_mode_emits_payload():
     trk = CombatVisionTracker(CombatTrackerConfig(mode="qr"), qr_detector=_FakeQr())
     res = trk.process_frame(frame, 0.0, 0, is_autonomous=True)
     assert res.qr_payload == "QR-NARA-7"
-    assert res.guidance is not None and res.guidance.frame == PerceptionFrame.VELOCITY_BODY
+    assert res.guidance is not None and res.guidance.frame == PerceptionFrame.VISION_LOS
 
 
 # ---------------- video recorder ----------------
@@ -142,9 +153,10 @@ def test_video_recorder_writes_file(tmp_path):
     assert rec.open(640, 480)
     frame = np.zeros((480, 640, 3), dtype=np.uint8)
     av = FrameGeometry(640, 480).av_box()
+    # sabit-fps pacing: 15 fps icin her ~67 ms'de bir kare yazilir
     for i in range(10):
-        rec.write(frame, server_ms=1_718_000_000_000 + i,
+        rec.write(frame, server_ms=1_718_000_000_000 + i * 67,
                   av_box=av, lock_box=BBox(320, 240, 60, 40), locked=True)
     rec.close()
-    assert rec.frames_written == 10
+    assert abs(rec.frames_written - 10) <= 1
     assert out.exists() and out.stat().st_size > 0

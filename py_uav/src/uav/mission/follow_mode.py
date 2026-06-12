@@ -121,6 +121,11 @@ class FollowMode(IMissionMode):
             return
         from ..infra.event_bus import EventType
         self._perc_sub_id = self._bus.subscribe(EventType.PERCEPTION_UPDATED, self._on_perception)
+        # combat_vision gibi cift-modlu modullerde kilitlenme moduna don
+        module = getattr(self._perception, "get", lambda _i: None)(
+            self.cfg.vision_module_id)
+        if module is not None and hasattr(module, "set_mode"):
+            module.set_mode("lock")
         self._perc_active = True
         _log.info("FOLLOW: vision fallback hazir (modul='%s')", self.cfg.vision_module_id)
 

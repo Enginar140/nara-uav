@@ -59,10 +59,13 @@ class LockEvent:
 
 @dataclass
 class LockEvaluatorConfig:
-    lock_min_frac: float = 0.06       # eksen oran esigi (sartname %5 + tolerans)
-    min_lock_s: float = 4.0           # kesintisiz kilit suresi
-    max_gap_s: float = 0.5            # tek seferde tolere edilen kayip
-    invalid_tolerance_s: float = 0.8  # pencere boyunca toplam kayip butcesi
+    lock_min_frac: float = 0.06        # eksen oran esigi (sartname %5 + tolerans)
+    min_lock_s: float = 4.0            # kesintisiz kilit suresi
+    # Sartname kesinti butcesi: 4 sn kilitte %5 = 200 ms ('eksik/hatali frame
+    # toleransi'); baslangic/bitiste gecerli degil. Esikler bunun ALTINDA
+    # tutulur ki gonderdigimiz her paket hakem incelemesini gecsin.
+    max_gap_s: float = 0.15            # tek seferde tolere edilen kayip
+    invalid_tolerance_s: float = 0.18  # pencere boyunca toplam kayip butcesi
     require_autonomous: bool = True
     prevent_same_target_twice: bool = True
     require_airborne: bool = True
@@ -166,8 +169,12 @@ class LockOnEvaluator:
 
         self._win.last_valid_t = t
         self._win.last_box = det
+        # Basari kosulu GECERLI sure uzerinden: gecen sure - kayip butcesi.
+        # Boylece 4 sn'lik pencerede kayip varsa kilit, kaybin telafi edildigi
+        # ana ertelenir (hakem 4 sn KESINTISIZ kilit arar).
         if self._state == LockState.TRACKING and \
-                (t - self._win.start_t) >= self.cfg.min_lock_s - 1e-6:
+                (t - self._win.start_t - self._win.invalid_acc) \
+                >= self.cfg.min_lock_s - 1e-6:
             self._state = LockState.LOCKED
             return self._make_event(LockEventKind.ACHIEVED, t)
         return None

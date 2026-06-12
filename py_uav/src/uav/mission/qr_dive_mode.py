@@ -98,7 +98,13 @@ class QRDiveMode(IMissionMode):
             return
         from ..infra.event_bus import EventType
         self._perc_sub_id = self._bus.subscribe(EventType.PERCEPTION_UPDATED, self._on_perception)
+        # Modul zaten aktifse (ornek: combat_vision FOLLOW'dan kaldi) yeniden
+        # baslatma; kamera + video kaydi kesintisiz kalir (tek parca kanit).
         self._perception.set_active(self.cfg.perception_module_id)
+        module = getattr(self._perception, "get", lambda _i: None)(
+            self.cfg.perception_module_id)
+        if module is not None and hasattr(module, "set_mode"):
+            module.set_mode("qr")
         self._perc_active = True
         _log.info("QR_DIVE: perception '%s' aktif", self.cfg.perception_module_id)
 

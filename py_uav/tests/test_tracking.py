@@ -108,15 +108,42 @@ def test_small_gap_tolerated_big_gap_breaks():
     ev = LockOnEvaluator()
     _feed(ev, 4.0)                       # kilit
     assert ev.state == LockState.LOCKED
-    # kisa kayip (0.3s < max_gap 0.5) -> kilit korunur
-    ev.update(4.3, None, GEOM)
+    # kisa kayip (0.1s < max_gap 0.15, sartname 200ms butcesinin altinda)
+    ev.update(4.1, None, GEOM)
     assert ev.state == LockState.LOCKED
-    ev.update(4.4, _det(), GEOM)
+    ev.update(4.15, _det(), GEOM)
     assert ev.state == LockState.LOCKED
-    # buyuk kayip -> kopar (LOST)
-    last = ev.update(5.2, None, GEOM)
+    # butce ustu kayip -> kopar (LOST)
+    last = ev.update(4.5, None, GEOM)
     assert ev.state == LockState.IDLE
     assert last is not None and last.kind == LockEventKind.LOST
+
+
+def test_gap_budget_is_spec_compliant():
+    """Sartname: 4 sn kilitte kesinti butcesi %5 = 200 ms. Varsayilanlar altinda."""
+    cfg = LockEvaluatorConfig()
+    assert cfg.max_gap_s <= 0.2
+    assert cfg.invalid_tolerance_s <= 0.2
+
+
+def test_lock_requires_valid_coverage_not_just_elapsed():
+    """Kayipli pencerede kilit, kaybin telafisine kadar ERTELENMELI.
+
+    0.1 sn'lik kayip varsa 4.0 sn'de degil ~4.1 sn'de ACHIEVED beklenir
+    (hakem kesintisiz 4 sn arar; gecen-sure saymak yanlis pakete yol acar).
+    """
+    ev = LockOnEvaluator()
+    t = 0.0
+    achieved_at = None
+    while t <= 4.3:
+        det = None if abs(t - 2.0) < 0.049 else _det()   # 2.0'da tek kayip frame
+        out = ev.update(round(t, 3), det, GEOM)
+        if out is not None and out.kind == LockEventKind.ACHIEVED:
+            achieved_at = t
+            break
+        t = round(t + 0.05, 3)
+    assert achieved_at is not None
+    assert achieved_at >= 4.05 - 1e-9   # 4.0'dan ERTELENMIS olmali
 
 
 def test_prevent_same_target_twice():
@@ -201,6 +228,165 @@ def test_downlink_server_clock_offset():
     enc.sync_server_clock(2_000_000_000_000, local_epoch_ms=1_000_000_000_000)
     # offset = +1e12 ms
     assert abs(enc.clock.offset_ms - 1_000_000_000_000) < 1.0
+
+
+# ---------------- combat tracker sartname uyumu ----------------
+
+class _StubDetector:
+    def __init__(self):
+        self.det = None
+
+    def best(self, frame):
+        return self.det
+
+
+class _StubRoi:
+    active = False
+    needs_refresh = False
+
+    def update(self, frame):
+        return None
+
+    def init(self, frame, box):
+        pass
+
+
+class _SpyRecorder:
+    is_open = True
+
+    def __init__(self):
+        self.calls = []   # (server_ms, locked, has_lock_box)
+
+    def write(self, frame, server_ms, av_box=None, lock_box=None, locked=False):
+        self.calls.append((server_ms, locked, lock_box is not None))
+        return True
+
+
+def _np_frame():
+    import numpy as np
+    return np.zeros((480, 640, 3), dtype=np.uint8)
+
+
+def _make_tracker(mode="lock", qr=None):
+    from uav.perception.tracking.combat_tracker import (CombatTrackerConfig,
+                                                        CombatVisionTracker)
+    det = _StubDetector()
+    rec = _SpyRecorder()
+    trk = CombatVisionTracker(CombatTrackerConfig(mode=mode, detect_every_n=1),
+                              detector=det, roi=_StubRoi(), qr_detector=qr,
+                              recorder=rec)
+    return trk, det, rec
+
+
+def test_tracker_draws_lock_box_during_tracking_phase():
+    """AH dortgeni 4 sn DOLMADAN da (TRACKING) cizilmeli.
+
+    Hakem bildirilen bitisten geriye sarip 4 sn'lik pencereyi inceler; o
+    pencere TRACKING fazidir -- dortgensiz frame kilidi gecersiz kilar.
+    """
+    trk, det, rec = _make_tracker()
+    frame = _np_frame()
+    t = 0.0
+    for i in range(10):                      # 1 sn: TRACKING (< 4 sn)
+        det.det = _det(tid=-1)
+        trk.process_frame(frame, t, server_ms=int(t * 1000), is_autonomous=True)
+        t += 0.1
+    from uav.perception.tracking.lock_evaluator import LockState
+    assert trk.lock_state() == LockState.TRACKING
+    # ilk frame'den itibaren kirmizi AH cizilmis olmali
+    assert all(locked and has_box for _, locked, has_box in rec.calls)
+
+
+def test_tracker_guidance_is_vision_los_with_fov_mapping():
+    from uav.perception.perception_types import PerceptionFrame
+    trk, det, rec = _make_tracker()
+    frame = _np_frame()
+    # hedef sag-altta: nx=0.5 -> yaw=+15 (h_fov 60); ny=0.5 -> pitch=+11.25 (asagi)
+    det.det = _det(cx=480, cy=360, tid=-1)
+    res = trk.process_frame(frame, 0.0, server_ms=0, is_autonomous=True)
+    g = res.guidance
+    assert g is not None and g.frame == PerceptionFrame.VISION_LOS
+    assert abs(g.a - 15.0) < 1.5
+    assert abs(g.b - 11.25) < 1.5
+    assert g.c == 80.0
+
+
+def test_tracker_qr_mode_records_video_evidence():
+    """Kamikaze de videoyla dogrulanir -> QR modunda her frame yazilmali."""
+    class _QrStub:
+        result = None
+
+        def detect(self, frame):
+            return self.result
+
+    qr = _QrStub()
+    trk, det, rec = _make_tracker(mode="qr", qr=qr)
+    frame = _np_frame()
+    trk.process_frame(frame, 0.0, server_ms=0, is_autonomous=True)
+    assert len(rec.calls) == 1 and rec.calls[0][1] is False   # QR yok: ham frame
+    from types import SimpleNamespace
+    qr.result = SimpleNamespace(box=BBox(320, 240, 80, 80), payload="KOD123")
+    res = trk.process_frame(frame, 0.1, server_ms=100, is_autonomous=True)
+    assert res.qr_payload == "KOD123"
+    assert rec.calls[-1][1] is True and rec.calls[-1][2] is True  # kirmizi kutu
+
+
+def test_tracker_runtime_mode_switch_keeps_module_alive():
+    class _QrStub:
+        def detect(self, frame):
+            return None
+
+    trk, det, rec = _make_tracker(mode="lock", qr=_QrStub())
+    frame = _np_frame()
+    det.det = _det(tid=-1)
+    trk.process_frame(frame, 0.0, server_ms=0, is_autonomous=True)
+    trk.set_mode("qr")
+    assert trk.cfg.mode == "qr"
+    res = trk.process_frame(frame, 0.1, server_ms=100, is_autonomous=True)
+    assert res.lock_event is None
+    trk.set_mode("lock")
+    assert trk.cfg.mode == "lock"
+    # kayit nesnesi ayni kaldi (video kaniti kesintisiz)
+    assert len(rec.calls) >= 2
+
+
+def test_video_recorder_fixed_fps_pacing(tmp_path):
+    pytest = __import__("pytest")
+    cv2 = pytest.importorskip("cv2")
+    import numpy as np
+    from uav.perception.tracking.video_recorder import (LockVideoRecorder,
+                                                        VideoConfig)
+    path = str(tmp_path / "lock.mp4")
+    rec = LockVideoRecorder(VideoConfig(path=path, fps=15.0, fourcc="mp4v"))
+    assert rec.open(640, 480)
+    frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    # 2 sn boyunca 30 fps kamera beslemesi -> dosyaya ~30 kare (15 fps * 2 sn)
+    for ms in range(0, 2000, 33):
+        rec.write(frame, server_ms=ms)
+    written = rec.frames_written
+    rec.close()
+    assert abs(written - 30) <= 2, written
+    # ayni yol tekrar acilirsa ESKI DOSYA EZILMEZ (zaman damgali yeni ad)
+    rec2 = LockVideoRecorder(VideoConfig(path=path, fps=15.0, fourcc="mp4v"))
+    assert rec2.open(640, 480)
+    rec2.write(frame, server_ms=0)
+    assert rec2.actual_path != path
+    rec2.close()
+
+
+def test_video_recorder_uses_actual_frame_size(tmp_path):
+    pytest = __import__("pytest")
+    pytest.importorskip("cv2")
+    import numpy as np
+    from uav.perception.tracking.video_recorder import (LockVideoRecorder,
+                                                        VideoConfig)
+    rec = LockVideoRecorder(VideoConfig(path=str(tmp_path / "v.mp4"),
+                                        fps=15.0, fourcc="mp4v"))
+    rec.open(640, 480)                          # istek 640x480...
+    frame = np.zeros((720, 1280, 3), dtype=np.uint8)   # kamera 1280x720 verdi
+    assert rec.write(frame, server_ms=0)        # sessiz dusme YOK, yazildi
+    assert rec.frames_written == 1
+    rec.close()
 
 
 # ---------------- downlink wiring (factory) ----------------

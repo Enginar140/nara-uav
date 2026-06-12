@@ -32,11 +32,16 @@ def build_combat_tracker(cfg, *, server_ms_fn: Optional[Callable[[], int]] = Non
     tcfg = CombatTrackerConfig(
         id=str(g.get("id", "combat_vision")),
         mode=str(g.get("mode", "lock")),
-        av_w_frac=float(g.get("av_w_frac", 0.40)),
-        av_h_frac=float(g.get("av_h_frac", 0.40)),
+        # AV oranlari sartname Sekil 1: genislik %50, yukseklik %80
+        av_w_frac=float(g.get("av_w_frac", 0.50)),
+        av_h_frac=float(g.get("av_h_frac", 0.80)),
         lock_min_frac=float(g.get("lock_min_frac", 0.06)),
         detect_every_n=int(g.get("detect_every_n", 6)),
         record_video=bool(g.get("record_video", False)),
+        guidance=str(g.get("guidance", "los")),
+        h_fov_deg=float(g.get("h_fov_deg", 60.0)),
+        v_fov_deg=float(g.get("v_fov_deg", 45.0)),
+        default_range_m=float(g.get("default_range_m", 80.0)),
         camera=CameraConfig(
             type=str(cam.get("type", "device")),
             device_index=int(cam.get("device_index", 0)),
@@ -61,8 +66,9 @@ def build_combat_tracker(cfg, *, server_ms_fn: Optional[Callable[[], int]] = Non
         lock=LockEvaluatorConfig(
             lock_min_frac=float(g.get("lock_min_frac", 0.06)),
             min_lock_s=float(lock.get("min_lock_s", 4.0)),
-            max_gap_s=float(lock.get("max_gap_s", 0.5)),
-            invalid_tolerance_s=float(lock.get("invalid_tolerance_s", 0.8)),
+            # sartname kesinti butcesi 200 ms -> altinda kal
+            max_gap_s=float(lock.get("max_gap_s", 0.15)),
+            invalid_tolerance_s=float(lock.get("invalid_tolerance_s", 0.18)),
             require_autonomous=bool(lock.get("require_autonomous", True)),
             prevent_same_target_twice=bool(lock.get("prevent_same_target_twice", True)),
             require_airborne=bool(lock.get("require_airborne", True)),
@@ -77,7 +83,7 @@ def build_combat_tracker(cfg, *, server_ms_fn: Optional[Callable[[], int]] = Non
             recorder = LockVideoRecorder(VideoConfig(
                 path=str(vid.get("path", "lock_record.mp4")),
                 fps=float(vid.get("fps", 15.0)),
-                fourcc=str(vid.get("fourcc", "mp4v")),
+                fourcc=str(vid.get("fourcc", "avc1")),
             ))
         except Exception:  # noqa: BLE001
             _log.exception("video recorder kurulamadi")
