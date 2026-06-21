@@ -64,38 +64,38 @@ Açıkça hariç. Kapsam kaymasını önlemek için belgelenmiştir.
 
 ## Traceability
 
-Hangi faz hangi gereksinimi kapsıyor. Roadmap oluşturulurken doldurulur.
+Hangi faz hangi gereksinimi kapsıyor.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| COMM-01 | TBD | Pending |
-| COMM-02 | TBD | Pending |
-| COMM-03 | TBD | Pending |
-| COMM-04 | TBD | Pending |
-| COMM-05 | TBD | Pending |
-| COMM-06 | TBD | Pending |
-| COMM-07 | TBD | Pending |
-| MODE-01 | TBD | Pending |
-| MODE-02 | TBD | Pending |
-| MODE-03 | TBD | Pending |
-| MODE-04 | TBD | Pending |
-| MODE-05 | TBD | Pending |
-| MODE-06 | TBD | Pending |
-| GCS-01 | TBD | Pending |
-| GCS-02 | TBD | Pending |
-| GCS-03 | TBD | Pending |
-| GCS-04 | TBD | Pending |
-| GCS-05 | TBD | Pending |
-| VALID-01 | TBD | Pending |
-| VALID-02 | TBD | Pending |
-| VALID-03 | TBD | Pending |
-| VALID-04 | TBD | Pending |
+| COMM-05 | Phase 1 | Pending |
+| COMM-06 | Phase 1 | Pending |
+| COMM-07 | Phase 1 | Pending |
+| COMM-01 | Phase 2 | Pending |
+| COMM-02 | Phase 2 | Pending |
+| COMM-03 | Phase 2 | Pending |
+| COMM-04 | Phase 2 | Pending |
+| GCS-01 | Phase 3 | Pending |
+| GCS-02 | Phase 3 | Pending |
+| GCS-03 | Phase 3 | Pending |
+| GCS-04 | Phase 3 | Pending |
+| GCS-05 | Phase 3 | Pending |
+| MODE-01 | Phase 4 | Pending |
+| MODE-02 | Phase 4 | Pending |
+| MODE-03 | Phase 4 | Pending |
+| MODE-04 | Phase 4 | Pending |
+| MODE-05 | Phase 4 | Pending |
+| MODE-06 | Phase 4 | Pending |
+| VALID-01 | Phase 5 | Pending |
+| VALID-02 | Phase 5 | Pending |
+| VALID-03 | Phase 5 | Pending |
+| VALID-04 | Phase 5 | Pending |
 
 **Coverage:**
 - v1 requirements: 22 total
-- Mapped to phases: 0 (roadmap pending)
-- Unmapped: 22 ⚠️ (roadmapper dolduracak)
+- Mapped to phases: 22 ✓
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-06-21*
-*Last updated: 2026-06-21 after initial definition*
+*Last updated: 2026-06-21 — traceability filled after roadmap creation*
